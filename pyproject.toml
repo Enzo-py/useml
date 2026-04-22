@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "useml"
+version = "0.0.1"
+description = "Simplifying PyTorch workflows: Pipeline, Versioning, and Vault."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [{name = "Enzo-py", email = "85191552+Enzo-py@users.noreply.github.com"}]
+
+[project.urls]
+"Homepage" = "https://github.com/Enzo-py/useml"
+"Bug Tracker" = "https://github.com/Enzo-py/useml/issues"
