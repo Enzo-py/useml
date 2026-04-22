@@ -1,0 +1,24 @@
+# --- Python Build & Distribution ---
+dist/
+build/
+*.egg-info/
+egg-info/
+nosetests.xml
+pip-wheel-metadata/
+
+# --- Virtual Environments ---
+venv/
+.venv/
+env/
+
+# --- Compiled Files ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Machine Learning specifics (Vault/Data) ---
+*.pt
+*.pth
+*.ckpt
+data/
+experiments/
