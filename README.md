@@ -64,3 +64,18 @@ To run the full suite:
 ```bash
 pytest -vv
 ```
+
+### 3. Build & Publish
+**Update Version**: Increment version in `pyproject.toml`.
+
+Build the package:
+```bash
+rm -rf dist/ build/ *.egg-info
+python3 -m build
+twine check dist/*
+```
+
+Upload the new package version:
+```bash
+twine upload dist/*
+```
