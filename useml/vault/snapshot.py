@@ -1,8 +1,20 @@
 import torch
 import yaml
+import shutil
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
+
+ARCHIVE_SOURCE_IGNORE_PATTERNS = ["vault*", ".git*", "__pycache__*", "*.pyc", ".DS_Store", "outputs*"]
+
+class SnapshotError(Exception):
+    """Base exception for all snapshot-related errors."""
+    pass
+
+
+class SnapshotOverwriteError(SnapshotError):
+    """Raised when an operation would overwrite an existing, non-empty snapshot."""
+    pass
 
 class Snapshot:
     """
@@ -23,6 +35,7 @@ class Snapshot:
         self.path = Path(path)
         self._manifest: Optional[Dict[str, Any]] = None
         self._metadata: Optional[Dict[str, Any]] = None
+        self.id = self.path.name
 
     @classmethod
     def create_new(cls, path: Path) -> "Snapshot":
@@ -39,92 +52,144 @@ class Snapshot:
         return cls(path)
 
     def save(
-        self, 
-        model: Any, 
-        optimizer: Optional[Any], 
-        manifest: Dict[str, Any], 
-        metadata: Dict[str, Any]
+        self,
+        components: Dict[str, Any],
+        manifest: Dict[str, Any],
+        metadata: Dict[str, Any],
+        archive_source: bool = True
     ) -> None:
-        """
-        Serializes model weights and configuration to the snapshot directory.
+        """Serializes components, system manifest, and user metadata to the vault.
+
+        This method creates a self-contained capsule of the experiment. It archives:
+        1. Model weights and optimizer states (Binary).
+        2. Component configurations (YAML).
+        3. The entire source code tree (for seamless 'useml.mount').
+        4. Metadata and System Manifest (YAML).
 
         Args:
-            model: The PyTorch model to save.
-            optimizer: Optional PyTorch optimizer to save.
-            manifest (Dict): System-level data (e.g., version, git hash).
-            metadata (Dict): User-defined metrics and hyperparameters.
-        """
-        # 1. Save binary weights
-        torch.save(model.state_dict(), self.path / "weights.pth")
-        
-        # 2. Save optimizer state if provided
-        if optimizer is not None:
-            torch.save(optimizer.state_dict(), self.path / "optimizer.pth")
-        
-        # 3. Save configuration files using YAML for human readability
-        save_params = {"default_flow_style": False, "sort_keys": False}
-        
-        with open(self.path / "manifest.yaml", "w") as f:
-            yaml.safe_dump(manifest, f, **save_params)
-            
-        with open(self.path / "metadata.yaml", "w") as f:
-            yaml.safe_dump(metadata, f, **save_params)
+            components: Dictionary of named components to serialize.
+            manifest: System-level data (framework version, high-level map).
+            metadata: User-defined metrics and hyperparameters.
+            archive_source: If True, copies the current working directory into 
+                the snapshot's source folder.
 
-    def _load_data(self) -> None:
+        Raises:
+            SnapshotOverwriteError: If the snapshot directory already contains data.
         """
-        Internal method to lazy-load YAML files into memory.
-        
-        This prevents unnecessary I/O when snapshots are listed but their 
-        metadata is not yet accessed.
-        """
+        # 1. Anti-Overwrite Guard
+        if self.path.exists() and any(self.path.iterdir()):
+            raise SnapshotOverwriteError(
+                f"Conflict: Directory '{self.path}' is not empty. "
+                "Snapshot overwriting is disabled for data integrity."
+            )
+
+        # 2. Directory structure initialization
+        # 'source' contiendra l'arborescence complète pour le mount
+        dirs = {
+            "weights": self.path / "weights",
+            "configs": self.path / "configs",
+            "optimizers": self.path / "optimizers",
+            "source": self.path / "source",
+        }
+
+        for directory in dirs.values():
+            directory.mkdir(parents=True, exist_ok=True)
+
+        # 3. Serialization configuration (Google Style YAML)
+        yaml_params = {"default_flow_style": False, "sort_keys": False}
+
+        # 4. Component serialization loop
+        for name, comp in components.items():
+            # A. Model Weights
+            # On utilise le dictionnaire 'components' du manifest pour le mapping
+            torch.save(comp.model.state_dict(), dirs["weights"] / f"{name}.pth")
+
+            # B. Optimizer State
+            if hasattr(comp, 'optimizer') and comp.optimizer is not None:
+                torch.save(
+                    comp.optimizer.state_dict(), 
+                    dirs["optimizers"] / f"{name}.pth"
+                )
+
+            # C. Component Configuration
+            if hasattr(comp, 'config') and comp.config is not None:
+                config_file = dirs["configs"] / f"{name}.yaml"
+                with open(config_file, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(comp.config, f, **yaml_params)
+
+        # 5. Full Source Code Backup (The "Time Machine" part)
+        # Contrairement à une simple copie de fichier, on capture tout le projet
+        if archive_source:
+            ignore_func = shutil.ignore_patterns(*ARCHIVE_SOURCE_IGNORE_PATTERNS)
+            shutil.copytree(
+                Path.cwd(), 
+                dirs["source"], 
+                ignore=ignore_func, 
+                dirs_exist_ok=True
+            )
+
+        # 6. System Manifest & User Metadata (Strictly Separated)
+        # Le manifest aide UseML à reconstruire la session
+        with open(self.path / "manifest.yaml", "w", encoding="utf-8") as f:
+            yaml.safe_dump(manifest, f, **yaml_params)
+
+        # Le metadata contient les scores de l'utilisateur (Accuracy, Loss...)
+        with open(self.path / "metadata.yaml", "w", encoding="utf-8") as f:
+            yaml.safe_dump(metadata, f, **yaml_params)
+
+    def _load_yaml(self, filename: str) -> dict:
+        file_path = self.path / filename
+        if file_path.exists():
+            with open(file_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        return {}
+
+    @property
+    def manifest(self) -> dict:
+        """System-level data (message, timestamp, version)."""
         if self._manifest is None:
-            # Load manifest
-            manifest_path = self.path / "manifest.yaml"
-            if manifest_path.exists():
-                with open(manifest_path, "r") as f:
-                    self._manifest = yaml.safe_load(f) or {}
-            else:
-                self._manifest = {}
+            self._manifest = self._load_yaml("manifest.yaml")
+        return self._manifest.get("info", {})
 
-            # Load user metadata
-            metadata_path = self.path / "metadata.yaml"
-            if metadata_path.exists():
-                with open(metadata_path, "r") as f:
-                    self._metadata = yaml.safe_load(f) or {}
-            else:
-                self._metadata = {}
+    @property
+    def components(self) -> dict:
+        """Registry of tracked components and their file mappings."""
+        if self._manifest is None:
+            self._manifest = self._load_yaml("manifest.yaml")
+        return self._manifest.get("components", {})
 
-    def __getitem__(self, key: str) -> Any:
-        """
-        Accesses manifest or metadata values using key indexing.
+    @property
+    def user_metadata(self) -> dict:
+        """User-defined metrics (accuracy, loss, etc.)."""
+        if self._metadata is None:
+            self._metadata = self._load_yaml("metadata.yaml")
+        return self._metadata
 
-        Priority is given to the system manifest, then user metadata.
+    def load_component(self, component: Any) -> None:
+        """Restores weights and optimizer state for a specific component.
 
         Args:
-            key (str): The metadata or manifest key to retrieve.
+            component (Component): The component instance to populate.
 
-        Returns:
-            Any: The value associated with the key, or None if not found.
+        Raises:
+            FileNotFoundError: If the component's weights are missing.
         """
-        self._load_data()
-        if self._manifest and key in self._manifest:
-            return self._manifest[key]
-        return self._metadata.get(key) if self._metadata else None
+        weights_path = self.path / "weights" / f"{component.name}.pth"
+        optim_path = self.path / "optimizers" / f"{component.name}.pth"
 
-    def load_weights(self, model: Any) -> None:
-        """
-        Loads the saved weights into the provided model instance.
-
-        Args:
-            model: The PyTorch model to update with saved weights.
-        """
-        weights_path = self.path / "weights.pth"
         if not weights_path.exists():
-            raise FileNotFoundError(f"No weights.pth found in {self.path}")
-            
-        model.load_state_dict(
-            torch.load(weights_path, map_location="cpu", weights_only=True)
-        )
+            raise FileNotFoundError(
+                f"No weights found for '{component.name}' in snapshot {self.path.name}"
+            )
+
+        # Load weights
+        state = torch.load(weights_path, map_location="cpu", weights_only=True)
+        component.model.load_state_dict(state)
+
+        # Load optimizer if applicable
+        if component.optimizer is not None and optim_path.exists():
+            opt_state = torch.load(optim_path, map_location="cpu", weights_only=True)
+            component.optimizer.load_state_dict(opt_state)
 
     def __repr__(self) -> str:
         return f"<useml.Snapshot id='{self.path.name}'>"

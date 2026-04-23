@@ -22,6 +22,11 @@ class Vault:
         self.path = Path(path)
         self.path.mkdir(parents=True, exist_ok=True)
 
+    def exists(self, project_name: str) -> bool:
+        """Checks if a project directory exists within the vault."""
+        project_path = self.path / project_name
+        return project_path.is_dir()
+
     def get_project(self, name: str) -> Project:
         """
         Retrieves an existing project or initializes a new one.
@@ -35,19 +40,23 @@ class Vault:
         """
         project_path = self.path / name
         return Project(project_path)
-
-    def list_projects(self) -> List[str]:
-        """
-        Scans the vault directory and lists all identified projects.
-
-        A directory is considered a project if it exists directly within 
-        the vault's root path.
-
+    
+    def projects(self) -> List[Project]:
+        """Lists all projects available in the vault directory.
+        
         Returns:
-            List[str]: A list of project names (directory names).
+            List[Project]: A list of Project instances.
         """
-        return [d.name for d in self.path.iterdir() if d.is_dir()]
+        if not self.path.exists():
+            return []
+            
+        return [
+            self.get_project(d.name) 
+            for d in self.path.iterdir() 
+            if d.is_dir() and not d.name.startswith(".")
+        ]
 
     def __repr__(self) -> str:
         """Returns a string representation of the Vault instance."""
-        return f"<useml.Vault path='{self.path.absolute()}' projects={len(self.list_projects())}>"
+        return f"<useml.Vault path='{self.path.absolute()}' projects={len(self.projects())}>"
+
