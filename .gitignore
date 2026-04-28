@@ -21,7 +21,9 @@ __pycache__/
 *.pt
 *.pth
 *.ckpt
-data/
-experiments/
+
+# testing
 playground.py
 playground.ipynb
+/models
+/.vault

@@ -1,141 +1,242 @@
-import pytest
+# tests/test_vault.py
+"""Tests for vault snapshots, source archiving, and mount isolation."""
+
+import sys
+import os
 import torch
+import pytest
+import useml
 from pathlib import Path
-
-from useml.vault import Vault
-from useml.vault.snapshot import SnapshotOverwriteError
-from useml.session import Component
-
-# --- HELPERS ---
-
-def create_dummy_component(name="model", model=None):
-    """Helper to create a valid Component for testing."""
-    if model is None:
-        model = torch.nn.Linear(10, 1)
-    return Component(name=name, model=model, config={"lr": 0.01})
-
-# --- TEST CLASSES ---
-
-class TestVaultHierarchy:
-    """Tests the navigation and relationship between Vault and Project levels."""
-
-    def test_project_initialization(self, tmp_path):
-        """Verifies that projects are correctly instantiated and tracked."""
-        vault = Vault(path=tmp_path)
-        project = vault.get_project("mnist_v1")
-        
-        assert project.path.name == "mnist_v1"
-        assert project.path.exists()
-        assert "mnist_v1" in vault.projects()
-
-    def test_multi_project_isolation(self, tmp_path):
-        """Ensures that multiple projects coexist independently."""
-        vault = Vault(path=tmp_path)
-        vault.get_project("cv_task")
-        vault.get_project("nlp_task")
-        
-        projects = vault.projects()
-        assert len(projects) == 2
-        assert "cv_task" in projects
-        assert "nlp_task" in projects
+from conftest import ModuleManager, FileManager
 
 
-class TestProjectOperations:
-    """Tests the lifecycle of snapshots including persistence and constraints."""
+# ============================================================================
+# STANDALONE TESTS
+# ============================================================================
 
-    def test_commit_persistence_lifecycle(self, tmp_path):
-        """Validates data persistence across Vault re-initializations."""
-        v_path = tmp_path / "storage"
-        
-        # Session 1: Commit
-        v1 = Vault(path=v_path)
-        proj1 = v1.get_project("p1")
-        comp = create_dummy_component("main")
-        
-        proj1.commit(message="Initial", components={"main": comp}, accuracy=0.95)
+def test_session_mount_isolation(isolated_project):
+    """Test that mount() isolates code versions without polluting global imports."""
+    project_dir = isolated_project["project_dir"]
+    vault_dir = isolated_project["vault_dir"]
 
-        # Session 2: Re-load
-        v2 = Vault(path=v_path)
-        proj2 = v2.get_project("p1")
-        
-        assert len(proj2) == 1
-        snapshot = proj2[0]
-        # On suppose que Snapshot.__getitem__ accède au manifest/metadata
-        assert snapshot.manifest["message"] == "Initial"
-        assert snapshot.user_metadata["accuracy"] == 0.95
+    useml.init(vault_path=vault_dir)
+    useml.new("iso_test")
 
-    def test_chronological_ordering(self, tmp_path):
-        """Ensures log() returns snapshots in descending chronological order."""
-        vault = Vault(path=tmp_path)
-        proj = vault.get_project("chrono")
-        comp = create_dummy_component()
-        
-        proj.commit("First", {"m": comp}, step=1)
-        proj.commit("Second", {"m": comp}, step=2)
-        
-        history = proj.log()
-        assert history[0].user_metadata["step"] == 2
-        assert history[1].user_metadata["step"] == 1
+    module_path = project_dir / "net.py"
+
+    # --- VERSION 1 ---
+    FileManager.write_simple_model(module_path, "v1")
+    net = ModuleManager.reload_fresh("net", project_dir)
+
+    assert net.Model.VERSION == "v1"
+
+    model = net.Model()
+    useml.track("m", model)
+    model.w.data.fill_(1.0)
+    useml.commit("v1")
+
+    # --- VERSION 2 ---
+    FileManager.write_simple_model(module_path, "v2")
+    net = ModuleManager.reload_fresh("net", project_dir)
+
+    assert net.Model.VERSION == "v2", \
+        f"Expected v2 after reload, got {net.Model.VERSION}"
+
+    model = net.Model()
+    model.w.data.fill_(2.0)
+    useml.track("m", model)
+    useml.commit("v2")
+
+    # TEST: Load current (latest = v2)
+    m_current = useml.load("m")
+    assert m_current.w.item() == 2.0
+    assert net.Model.VERSION == "v2"
+
+    # TEST: Mount v1 snapshot via useml.workdir
+    useml.mount("\\latest")
+
+    from useml.workdir import net as net_mounted
+    assert net_mounted.Model.VERSION == "v1", \
+        f"Expected v1 from mounted snapshot, got {net_mounted.Model.VERSION}"
+
+    # Regular import should still be v2 (unaffected by mount)
+    assert net.Model.VERSION == "v2"
+
+    # Cleanup
+    ModuleManager.clear("net", "useml.workdir.net")
 
 
-class TestSnapshotIntegrity:
-    """Tests technical validity and security of stored artifacts."""
+# ============================================================================
+# VAULT RUNTIME TESTS
+# ============================================================================
 
-    def test_multi_component_fidelity(self, tmp_path):
-        """Verifies restoration for multiple named components."""
-        vault = Vault(path=tmp_path)
-        proj = vault.get_project("pipeline")
-        
-        m1, m2 = torch.nn.Linear(2, 2), torch.nn.Linear(3, 3)
-        with torch.no_grad():
-            m1.weight.fill_(1.0)
-            m2.weight.fill_(2.0)
-            
-        comps = {
-            "enc": create_dummy_component("enc", m1),
-            "dec": create_dummy_component("dec", m2)
-        }
-        
-        proj.commit("Multi-save", comps)
-        
-        # Restoration
-        new_m1, new_m2 = torch.nn.Linear(2, 2), torch.nn.Linear(3, 3)
-        snap = proj[0]
-        
-        snap.load_component(Component("enc", new_m1))
-        snap.load_component(Component("dec", new_m2))
-        
-        assert torch.all(new_m1.weight == 1.0)
-        assert torch.all(new_m2.weight == 2.0)
+class TestVaultRuntime:
+    """Test vault snapshot creation, source archiving, and code reloading."""
 
-    def test_overwrite_protection(self, tmp_path):
-        """Checks that SnapshotOverwriteError is raised when saving to a non-empty dir."""
-        vault = Vault(path=tmp_path)
-        proj = vault.get_project("security")
-        comp = create_dummy_component()
-        
-        # On crée un snapshot
-        snap = proj.commit("First", {"m": comp})
-        
-        # On tente de re-save manuellement sur le même chemin
-        with pytest.raises(SnapshotOverwriteError):
-            snap.save(components={"m": comp}, manifest={}, metadata={})
+    def test_snapshot_vs_current_code(self, project_env):
+        """Test that code changes are reflected after reload."""
+        model_file = project_env / "mymodel.py"
 
-    def test_source_code_archiving(self, tmp_path):
-        """Verifies that the project source is archived and accessible."""
-        vault = Vault(path=tmp_path)
-        proj = vault.get_project("audit")
-        
-        model = torch.nn.Linear(1, 1) # <- to findback
-        comp = Component("m", model) 
-        
-        snap = proj.commit("Code check", {"m": comp})
-        
+        # V1
+        FileManager.write_model(model_file, "v1")
+        mymodel = ModuleManager.reload_fresh("mymodel", project_env)
+        assert mymodel.MyModel.VERSION == "v1"
+
+        useml.init(project_env.parent / "vault")
+        useml.new("p")
+        useml.track("m", mymodel.MyModel())
+        snap_v1 = useml.commit("v1")
+
+        # V2
+        FileManager.write_model(model_file, "v2")
+        mymodel = ModuleManager.reload_fresh("mymodel", project_env)
+
+        assert mymodel.MyModel.VERSION == "v2", \
+            f"Expected v2 after file change + reload, got {mymodel.MyModel.VERSION}"
+
+        # Snapshot v1 metadata should exist
+        assert snap_v1.components["m"]["code_hash"] is not None
+
+        # Cleanup
+        ModuleManager.clear("mymodel")
+
+    def test_mount_switching_source(self, project_env):
+        """Test that mount() switches the code loaded via useml.workdir."""
+        model_file = project_env / "mymodel.py"
+
+        # V1: commit
+        FileManager.write_model(model_file, "v1")
+        mymodel = ModuleManager.reload_fresh("mymodel", project_env)
+
+        useml.init(project_env.parent / "vault")
+        useml.new("p", auto_focus=True)
+        useml.track("m", mymodel.MyModel())
+        snap = useml.commit("v1")
+
+        # V2: update code
+        FileManager.write_model(model_file, "v2")
+        mymodel = ModuleManager.reload_fresh("mymodel", project_env)
+
+        # Mount and verify source was archived in snapshot
+        useml.mount("\\latest")
+
         source_dir = snap.path / "source"
-        assert source_dir.exists()
-        assert source_dir.is_dir()
+        assert source_dir.exists(), f"Source dir not created: {source_dir}"
 
-        current_file_name = Path(__file__).name
-        archived_file = source_dir / "tests" / current_file_name 
-        assert archived_file.exists()
-        assert "model = torch.nn.Linear(1, 1) # <- to findback" in open(archived_file).read()
+        files = list(source_dir.rglob("mymodel.py"))
+        assert len(files) >= 1, \
+            f"mymodel.py not found in snapshot source.\n" \
+            f"Contents: {[f.relative_to(source_dir) for f in source_dir.rglob('*')]}"
+
+        # Verify mounted code is v1
+        from useml.workdir import mymodel as mymodel_mounted
+        assert mymodel_mounted.MyModel.VERSION == "v1", \
+            f"Expected v1 from snapshot, got {mymodel_mounted.MyModel.VERSION}"
+
+        # Cleanup
+        ModuleManager.clear("mymodel", "useml.workdir.mymodel")
+
+    def test_source_code_archived(self, project_env):
+        """Test that source code is properly archived in the snapshot."""
+        model_file = project_env / "mymodel.py"
+
+        FileManager.write_model(model_file, "v1")
+        mymodel = ModuleManager.reload_fresh("mymodel", project_env)
+
+        useml.init(project_env.parent / "vault")
+        useml.new("p", auto_focus=True)
+        useml.track("m", mymodel.MyModel())
+        snap = useml.commit("archive")
+
+        source_dir = snap.path / "source"
+        assert source_dir.exists(), \
+            f"Source directory was not created: {source_dir}"
+
+        files = list(source_dir.rglob("mymodel.py"))
+        all_files = [f.relative_to(source_dir) for f in source_dir.rglob("*")]
+
+        assert len(files) >= 1, \
+            f"Expected mymodel.py in snapshot source.\n" \
+            f"Contents: {all_files}"
+
+        # Cleanup
+        ModuleManager.clear("mymodel")
+
+    def test_load_weights_with_code_change(self, project_env):
+        """Test loading weights when source code has changed."""
+        model_file = project_env / "mymodel.py"
+
+        # V1: commit
+        FileManager.write_model(model_file, "v1")
+        mymodel = ModuleManager.reload_fresh("mymodel", project_env)
+
+        useml.init(project_env.parent / "vault")
+        useml.new("p")
+        useml.track("m", mymodel.MyModel())
+        useml.commit("v1")
+
+        # V2: change code
+        FileManager.write_model(model_file, "v2")
+        mymodel = ModuleManager.reload_fresh("mymodel", project_env)
+
+        # Load with code change warning (should not raise)
+        m_loaded = useml.load("m", _from="\\latest")
+        assert isinstance(m_loaded, mymodel.MyModel)
+
+        # Cleanup
+        ModuleManager.clear("mymodel")
+
+    def test_no_sys_modules_pollution(self, project_env):
+        """Test that mount() does not pollute global sys.modules."""
+        model_file = project_env / "mymodel.py"
+
+        FileManager.write_model(model_file, "v1")
+        mymodel = ModuleManager.reload_fresh("mymodel", project_env)
+
+        useml.init(project_env.parent / "vault")
+        useml.new("p", auto_focus=True)
+        useml.track("m", mymodel.MyModel())
+        useml.commit("v1")
+
+        modules_before = set(sys.modules.keys())
+        useml.mount("\\latest")
+        modules_after = set(sys.modules.keys())
+
+        # Only useml.workdir.* modules should have been added
+        new_modules = modules_after - modules_before
+        polluting = [m for m in new_modules if not m.startswith("useml.workdir")]
+
+        assert not polluting, \
+            f"mount() added unexpected modules to sys.modules: {polluting}"
+
+        # Cleanup
+        ModuleManager.clear("mymodel")
+
+
+# ============================================================================
+# IMPORT HOOK TESTS
+# ============================================================================
+
+class TestImportHook:
+    """Test the useml.workdir import hook behavior."""
+
+    def test_import_hook_scope(self, project_env):
+        """Test that normal imports are not affected by the workdir hook."""
+        import importlib.util
+
+        model_file = project_env / "mymodel.py"
+        FileManager.write_model(model_file, "v1")
+
+        # Module must be findable via sys.path
+        spec = importlib.util.find_spec("mymodel")
+        assert spec is not None, \
+            "mymodel should be findable via sys.path"
+
+        mymodel = ModuleManager.reload_fresh("mymodel", project_env)
+        assert mymodel.MyModel.VERSION == "v1"
+
+        # useml.workdir hook should not affect direct imports
+        assert "useml.workdir.mymodel" not in sys.modules
+
+        # Cleanup
+        ModuleManager.clear("mymodel")

@@ -1,11 +1,33 @@
 import torch
 import yaml
 import shutil
+import sys
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
-ARCHIVE_SOURCE_IGNORE_PATTERNS = ["vault*", ".git*", "__pycache__*", "*.pyc", ".DS_Store", "outputs*"]
+ARCHIVE_SOURCE_IGNORE_PATTERNS = [".git*", "__pycache__*", "*.pyc", ".DS_Store"]
+
+import sys
+import inspect
+from pathlib import Path
+
+def collect_source_from_components(components: dict, project_root: Path) -> set:
+    """Collect source files from component instances."""
+    paths = set()
+    for obj in components.values():
+        try:
+            module = sys.modules.get(obj.model.__class__.__module__)
+            p = Path(module.__file__).resolve()
+            
+            # Only save if within project
+            if p.is_relative_to(project_root.resolve()):
+                if p.exists():
+                    paths.add(p)
+        except (TypeError, ValueError):
+            continue
+    
+    return paths
 
 class SnapshotError(Exception):
     """Base exception for all snapshot-related errors."""
@@ -14,6 +36,10 @@ class SnapshotError(Exception):
 
 class SnapshotOverwriteError(SnapshotError):
     """Raised when an operation would overwrite an existing, non-empty snapshot."""
+    pass
+
+class SnapshotLimitExceededError(SnapshotError):
+    """Raised when the number of files to archive exceeds the safety threshold."""
     pass
 
 class Snapshot:
@@ -55,8 +81,9 @@ class Snapshot:
         self,
         components: Dict[str, Any],
         manifest: Dict[str, Any],
-        metadata: Dict[str, Any],
-        archive_source: bool = True
+        meta: Dict[str, Any],
+        archive_source: bool = True,
+        inline_sources: Optional[Dict[str, str]] = None
     ) -> None:
         """Serializes components, system manifest, and user metadata to the vault.
 
@@ -79,12 +106,10 @@ class Snapshot:
         # 1. Anti-Overwrite Guard
         if self.path.exists() and any(self.path.iterdir()):
             raise SnapshotOverwriteError(
-                f"Conflict: Directory '{self.path}' is not empty. "
-                "Snapshot overwriting is disabled for data integrity."
+                f"Conflict: Directory '{self.path}' is not empty."
             )
 
         # 2. Directory structure initialization
-        # 'source' contiendra l'arborescence complète pour le mount
         dirs = {
             "weights": self.path / "weights",
             "configs": self.path / "configs",
@@ -95,13 +120,13 @@ class Snapshot:
         for directory in dirs.values():
             directory.mkdir(parents=True, exist_ok=True)
 
-        # 3. Serialization configuration (Google Style YAML)
+        # 3. Serialization configuration
         yaml_params = {"default_flow_style": False, "sort_keys": False}
 
         # 4. Component serialization loop
         for name, comp in components.items():
             # A. Model Weights
-            # On utilise le dictionnaire 'components' du manifest pour le mapping
+            # Note: On accède à .model car 'comp' est l'objet tracké (Component)
             torch.save(comp.model.state_dict(), dirs["weights"] / f"{name}.pth")
 
             # B. Optimizer State
@@ -117,25 +142,47 @@ class Snapshot:
                 with open(config_file, "w", encoding="utf-8") as f:
                     yaml.safe_dump(comp.config, f, **yaml_params)
 
-        # 5. Full Source Code Backup (The "Time Machine" part)
-        # Contrairement à une simple copie de fichier, on capture tout le projet
-        if archive_source:
-            ignore_func = shutil.ignore_patterns(*ARCHIVE_SOURCE_IGNORE_PATTERNS)
-            shutil.copytree(
-                Path.cwd(), 
-                dirs["source"], 
-                ignore=ignore_func, 
-                dirs_exist_ok=True
-            )
 
-        # 6. System Manifest & User Metadata (Strictly Separated)
-        # Le manifest aide UseML à reconstruire la session
+        # 5. Full Source Code Backup
+        if archive_source:
+            cwd = Path(sys.path[0]).resolve()
+            # 1. On cible les fichiers VITAUX (ceux des objets trackés)
+            core_dependencies = collect_source_from_components(components, cwd)
+            
+            # 2. On applique ton filtre de sécurité (Kill Path Vault)
+            valid_paths = []
+            for p in core_dependencies:
+                # Si c'est dans un vault, on refuse
+                if any((parent / ".useml_vault").exists() for parent in p.parents):
+                    continue
+                valid_paths.append(p)
+
+            # 3. Copie physique
+            for src in valid_paths:
+                rel = src.relative_to(cwd)
+                dest = dirs["source"] / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
+        
+        
+        # 6. Inline Sources Injection (Notebook & Object Inspection)
+        # On écrit les sources extraites APRÈS la copie pour s'assurer qu'elles 
+        # sont présentes même si le fichier source n'existe pas ou est différent.
+        if inline_sources:
+            for rel_path, content in inline_sources.items():
+                target_file = dirs["source"] / rel_path
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                target_file.write_text(content, encoding="utf-8")
+
+        # 7. System Manifest & User Metadata
         with open(self.path / "manifest.yaml", "w", encoding="utf-8") as f:
             yaml.safe_dump(manifest, f, **yaml_params)
 
-        # Le metadata contient les scores de l'utilisateur (Accuracy, Loss...)
         with open(self.path / "metadata.yaml", "w", encoding="utf-8") as f:
-            yaml.safe_dump(metadata, f, **yaml_params)
+            yaml.safe_dump(meta, f, **yaml_params)
+
+        with open(dirs["source"] / "__init__.py", "w") as f:
+            f.write("# snap_<id>/source/__init__.py")
 
     def _load_yaml(self, filename: str) -> dict:
         file_path = self.path / filename
@@ -159,13 +206,13 @@ class Snapshot:
         return self._manifest.get("components", {})
 
     @property
-    def user_metadata(self) -> dict:
+    def metadata(self) -> dict:
         """User-defined metrics (accuracy, loss, etc.)."""
         if self._metadata is None:
             self._metadata = self._load_yaml("metadata.yaml")
         return self._metadata
 
-    def load_component(self, component: Any) -> None:
+    def _load_component(self, component: Any) -> None:
         """Restores weights and optimizer state for a specific component.
 
         Args:

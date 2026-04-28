@@ -1,9 +1,13 @@
+import sys
 import datetime
 import importlib.metadata
+
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from .snapshot import Snapshot
+from ..session.component import Component
+from .code_extractor import _get_source_assets
 
 class ProjectError(Exception):
     """Base exception for all project-related errors."""
@@ -12,6 +16,10 @@ class ProjectError(Exception):
 class ProjectAlreadyExistsError(Exception):
     """A project with the same name (identifier) is already defined in this vault."""
     pass
+
+def _is_notebook() -> bool:
+    """Détecte si le code tourne dans un kernel Jupyter/IPython."""
+    return 'ipykernel' in sys.modules or 'IPython' in sys.modules
 
 class ProjectState:
     """Represents a paused project state in RAM."""
@@ -38,63 +46,64 @@ class Project:
         self.path.mkdir(parents=True, exist_ok=True)
 
     def commit(
-        self, 
-        message: str, 
-        components: Dict[str, Any], 
-        **user_metadata: Any
+        self,
+        message: str,
+        components: Dict[str, Component],
     ) -> Snapshot:
-        """Records the current state of all tracked components and source code.
+        """Create a reproducible snapshot of tracked components."""
 
-        This method performs four main actions:
-        1. Generates a unique snapshot ID based on high-precision timestamp.
-        2. Archives the current project source code for full reproducibility.
-        3. Serializes component weights and captures their class/module identity.
-        4. Stores metadata and metrics in a manifest.yaml file.
-
-        Args:
-            message: A descriptive note for this snapshot.
-            components: Dictionary of named components (e.g., {'model': MyNet()}).
-            **user_metadata: Arbitrary metrics or hyperparameters (e.g., lr=0.01).
-
-        Returns:
-            Snapshot: The newly created snapshot instance.
-        """
         now = datetime.datetime.now()
         timestamp = now.strftime("%Y%m%d_%H%M%S_%f")
         snap_id = f"snap_{timestamp}"
         snap_path = self.get_snapshot_path(snap_id)
 
-        # get useml version dynamicly
+        # --- version ---
         try:
             version = importlib.metadata.version("useml")
         except importlib.metadata.PackageNotFoundError:
             version = "dev-local"
 
-        component_map = {}
-        for name, obj in components.items():
-            component_map[name] = {
-                "file": f"{name}.pth",
-                "class_name": obj.__class__.__name__,
-                "module_path": obj.__class__.__module__,
+        # --- extract inline sources ---
+        inline_sources = _get_source_assets(components)
+        print(inline_sources)
+
+        # --- build manifest (STRICT: only structure) ---
+        component_manifest = {}
+        for name, comp in components.items():
+            model_class = comp.model.__class__
+            
+            component_manifest[name] = {
+                "source": f"source/{name}.py",
+                "class_name": model_class.__name__,  # Ex: "MyModel", pas "Component"
+                "module_path": model_class.__module__,  # Ex: "models.mymodel"
+                "weights": f"weights/{name}.pth",
+                "config": f"config/{name}.yaml" if comp.config else None,
+                "code_hash": self._get_code_hash(model_class),
             }
 
         manifest = {
-            "info": {
-                "message": message,
-                "timestamp": timestamp,
-                "iso_date": now.isoformat(),
-                "useml_version": version,
-            },
-            "components": component_map,
+            "components": component_manifest,
+            # keep manifest deterministic → no timestamps, no message, no env
         }
 
+        # --- build meta (context only) ---
+        meta = {
+            "message": message,
+            "timestamp": timestamp,
+            "iso_date": now.isoformat(),
+            "useml_version": version,
+            "environment": "notebook" if _is_notebook() else "script",
+        }
+
+        # --- snapshot save ---
         snapshot = Snapshot(snap_path)
-        
+
         snapshot.save(
             components=components,
             manifest=manifest,
-            metadata=user_metadata,
-            archive_source=True
+            meta=meta,  # renamed (clean separation)
+            archive_source=False,
+            inline_sources=inline_sources,
         )
 
         return snapshot
@@ -123,6 +132,17 @@ class Project:
 
     def get_snapshot_path(self, snap_id) -> Path:
         return self.path / snap_id
+    
+    def _get_code_hash(self, cls: type) -> str:
+        """Computes the MD5 hash of a class's source code."""
+        import hashlib
+        import inspect
+        
+        try:
+            source = inspect.getsource(cls)
+            return hashlib.md5(source.encode()).hexdigest()
+        except OSError:
+            return "unknown"
 
     def __getitem__(self, index: int) -> Snapshot:
         """Access a snapshot by index (0 is the latest)."""

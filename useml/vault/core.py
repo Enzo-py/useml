@@ -21,6 +21,7 @@ class Vault:
         """
         self.path = Path(path)
         self.path.mkdir(parents=True, exist_ok=True)
+        (Path(path) / ".useml_vault").touch(exist_ok=True) # creation of a vault file gate
 
     def exists(self, project_name: str) -> bool:
         """Checks if a project directory exists within the vault."""

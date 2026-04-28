@@ -9,6 +9,8 @@ from .session.manager import _session
 from .vault.project import Project, ProjectAlreadyExistsError
 from .vault.snapshot import Snapshot
 
+from . import workdir  # Enable useml.workdir.* imports
+
 
 def init(vault_path: str = "vault") -> None:
     """Connects the session to a storage vault directory.
@@ -38,14 +40,16 @@ def projects() -> List[Project]:
 def focus(project_name: str, force: bool = False) -> None:
     """Sets focus. Use force=True to discard unsaved RAM components."""
     _session.set_focus(project_name, force=force)
+    return _session._project
 
 
-def new(project_name: str, force: bool = False) -> None:
+def new(project_name: str, force: bool = False, auto_focus=False) -> None:
     """Creates a new project context. Use force=True to discard unsaved RAM."""
-    if _session.vault.exists(project_name):
+    if not auto_focus and _session.vault.exists(project_name):
         raise ProjectAlreadyExistsError(f"A project with the same name (identifier) is already defined in this vault ({_session.vault}).")
     
     _session.set_focus(project_name, force=force)
+
 
 def stash() -> None:
     """Stashes current project state in RAM."""
@@ -82,11 +86,6 @@ def commit(message: str, **metrics: Any) -> Snapshot:
     return _session.commit(message, **metrics)
 
 
-def resume() -> None:
-    """Restores the latest available state into all tracked components."""
-    _session.resume()
-
-
 def show() -> None:
     """Displays a summary of the current session, project, and tracked components."""
     if not _session.vault:
@@ -105,13 +104,35 @@ def show() -> None:
         print(f"Tracked: {list(_session.components.keys()) or 'None'}")
         if len(proj) > 0:
             latest = proj[0]
-            print(f"Latest:  {latest['message']} [{latest.path.name}]")
+            print(f"Latest:  {latest.metadata['message']} [{latest.path.name}]")
     except RuntimeError:
         print("Project: [No focus - Use useml.focus() or useml.new()]")
     print(f"-----------------------\n")
 
-def mount(tag) -> Generator:
-    return _session.mount(tag)
+def load(name: str, _from: str = None):
+    """Loads a saved model with its weights.
+    
+    Args:
+        name: Name of the model to load.
+        _from: Snapshot to load weights from (default: mounted or \\latest).
+    
+    Returns:
+        PyTorch module with loaded weights.
+    """
+    return _session.load(name, _from=_from)
+
+
+def mount(snapshot_tag: str):
+    """Mounts a snapshot with code isolation (context manager).
+    
+    Args:
+        snapshot_tag: Snapshot identifier (\\latest, \\head~N, or folder name).
+    
+    Yields:
+        Path to the mounted snapshot directory.
+    """
+    return _session.mount(snapshot_tag)
+
 
 __all__ = [
     "init",

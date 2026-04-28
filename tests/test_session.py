@@ -1,5 +1,6 @@
 import importlib
 import sys
+from pathlib import Path
 import pytest
 import torch
 import useml
@@ -112,6 +113,7 @@ def test_show_dirty_warning(tmp_path, capsys):
     useml.init(vault_path=tmp_path)
     useml.new("dirty_proj")
     useml.track("m", DummyModel())
+    useml.commit("tmp")
     
     useml.show()
     out = capsys.readouterr().out
@@ -131,55 +133,93 @@ def test_focus_same_project_is_no_op(tmp_path):
     assert len(_session.components) == 1
 
 def test_session_mount_isolation(tmp_path):
-    """Verifies that mount() correctly isolates the snapshot's code using high-level API."""
     import os
     import sys
-    
-    # setup workdir
-    project_dir = tmp_path / "my_working_project"
+    import importlib
+    import torch
+
+    project_dir = tmp_path / "app"
     project_dir.mkdir()
-    vault_dir = tmp_path / "vault_storage"
-    
-    old_cwd = os.getcwd()
+    vault_dir = tmp_path / "vault"
+
     os.chdir(project_dir)
-    
+    sys.path.insert(0, str(project_dir))
+
     try:
         useml.init(vault_path=vault_dir)
-        useml.new("mount_test_proj")
-        
-        # creation of dummy module V1
-        module_path = project_dir / "ghost_module.py"
-        module_path.write_text("VERSION = 'v1'")
-        
-        # for tracking we need a model
-        useml.track("dummy", DummyModel())
-        snap = useml.commit("Commit V1")
-        tag_v1 = snap.id
+        useml.new("iso_test")
 
-        local_var = "test_local_var"
-        
-        # update dummy module to V2
-        module_path.write_text("VERSION = 'v2'")
-        
-        # cleaning for forcing reimport
-        if "ghost_module" in sys.modules:
-            del sys.modules["ghost_module"]
-        
-        sys.path.insert(0, str(project_dir))
-        import ghost_module # type: ignore
-        assert ghost_module.VERSION == 'v2'
-        
-        with useml.mount(tag_v1):
-            import ghost_module # type: ignore
-            assert ghost_module.VERSION == 'v1', "Should have loaded V1 from snapshot code"
-            
-        assert ghost_module.VERSION == 'v2', "Should revert to current working code"
-        assert local_var == "test_local_var", "Local var was erased or corrupted"
+        module_path = project_dir / "net.py"
+
+        # --- VERSION 1 ---
+        module_path.write_text("""
+import torch
+class Model(torch.nn.Module):
+    VERSION = 'v1'
+    def __init__(self):
+        super().__init__()
+        self.w = torch.nn.Parameter(torch.tensor([0.0]))
+""")
+
+        import net
+        importlib.reload(net)
+
+        model = net.Model()
+        useml.track("m", model)
+
+        model.w.data.fill_(1.0)
+        snap_v1 = useml.commit("v1")
+
+        # --- VERSION 2 (code + poids) ---
+        module_path.write_text("""
+import torch
+class Model(torch.nn.Module):
+    VERSION = 'v2'
+    def __init__(self):
+        super().__init__()
+        self.w = torch.nn.Parameter(torch.tensor([0.0]))
+""")
+
+        importlib.reload(net)
+
+        model.w.data.fill_(2.0)
+        useml.track("m", model)
+        useml.commit("v2")
+
+        # -------------------------
+        # TEST LOAD CURRENT
+        # -------------------------
+        m_current = useml.load("m")
+        assert m_current.w.item() == 2.0
+        assert net.Model.VERSION == "v2"
+
+        # -------------------------
+        # TEST LOAD SNAPSHOT
+        # -------------------------
+        useml.mount("\\latest")
+
+        m_snap = useml.load("m")
+        assert m_snap.w.item() == 2.0  # latest snapshot
+
+        useml.mount("\\head~1")
+
+        m_old = useml.load("m")
+        assert m_old.w.item() == 1.0
+
+        # -------------------------
+        # TEST CODE ISOLATION
+        # -------------------------
+        source_dir = Path(_session._mounted_sys_path)
+        snap_file = list(source_dir.rglob("net.py"))[0]
+        snap_code = snap_file.read_text()
+
+        assert "VERSION = 'v1'" in snap_code
+
+        # back to current
+        useml.mount("\\workdir")
+
+        importlib.reload(net)
+        assert net.Model.VERSION == "v2"
 
     finally:
-        os.chdir(old_cwd)
-        # cleaning every thing
-        if str(project_dir) in sys.path:
-            sys.path.remove(str(project_dir))
-        if "ghost_module" in sys.modules:
-            del sys.modules["ghost_module"]
+        sys.path.remove(str(project_dir))
