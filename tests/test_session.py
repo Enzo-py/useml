@@ -5,6 +5,7 @@ import pytest
 import torch
 import useml
 from useml.session.manager import _session, UncommittedSessionError
+from conftest import ModuleManager, FileManager
 
 class DummyModel(torch.nn.Module):
     def __init__(self, val=1.0):
@@ -133,9 +134,6 @@ def test_focus_same_project_is_no_op(tmp_path):
 
 def test_session_mount_isolation(tmp_path):
     import os
-    import sys
-    import importlib
-    import torch
 
     project_dir = tmp_path / "app"
     project_dir.mkdir()
@@ -151,35 +149,19 @@ def test_session_mount_isolation(tmp_path):
         module_path = project_dir / "net.py"
 
         # --- VERSION 1 ---
-        module_path.write_text("""
-import torch
-class Model(torch.nn.Module):
-    VERSION = 'v1'
-    def __init__(self):
-        super().__init__()
-        self.w = torch.nn.Parameter(torch.tensor([0.0]))
-""")
-
-        import net
-        importlib.reload(net)
+        FileManager.write_simple_model(module_path, "v1")
+        net = ModuleManager.reload_fresh("net", project_dir)
+        assert net.Model.VERSION == "v1"
 
         model = net.Model()
         useml.track("m", model)
-
         model.w.data.fill_(1.0)
-        snap_v1 = useml.commit("v1")
+        useml.commit("v1")
 
-        # --- VERSION 2 (code + poids) ---
-        module_path.write_text("""
-import torch
-class Model(torch.nn.Module):
-    VERSION = 'v2'
-    def __init__(self):
-        super().__init__()
-        self.w = torch.nn.Parameter(torch.tensor([0.0]))
-""")
-
-        importlib.reload(net)
+        # --- VERSION 2 ---
+        FileManager.write_simple_model(module_path, "v2")
+        net = ModuleManager.reload_fresh("net", project_dir)
+        assert net.Model.VERSION == "v2"
 
         model.w.data.fill_(2.0)
         useml.track("m", model)
@@ -196,12 +178,10 @@ class Model(torch.nn.Module):
         # TEST LOAD SNAPSHOT
         # -------------------------
         useml.mount("\\latest")
-
         m_snap = useml.load("m")
-        assert m_snap.w.item() == 2.0  # latest snapshot
+        assert m_snap.w.item() == 2.0
 
         useml.mount("\\head~1")
-
         m_old = useml.load("m")
         assert m_old.w.item() == 1.0
 
@@ -209,16 +189,17 @@ class Model(torch.nn.Module):
         # TEST CODE ISOLATION
         # -------------------------
         source_dir = Path(_session._mounted_sys_path)
-        snap_file = list(source_dir.rglob("net.py"))[0]
-        snap_code = snap_file.read_text()
-
-        assert "VERSION = 'v1'" in snap_code
+        snap_files = list(source_dir.rglob("net.py"))
+        assert len(snap_files) >= 1, \
+            f"net.py not found in snapshot. Contents: {list(source_dir.rglob('*'))}"
+        assert "VERSION = 'v1'" in snap_files[0].read_text()
 
         # back to current
         useml.mount("\\workdir")
-
-        importlib.reload(net)
+        net = ModuleManager.reload_fresh("net", project_dir)
         assert net.Model.VERSION == "v2"
 
     finally:
-        sys.path.remove(str(project_dir))
+        ModuleManager.clear("net")
+        if str(project_dir) in sys.path:
+            sys.path.remove(str(project_dir))

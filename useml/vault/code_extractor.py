@@ -150,14 +150,20 @@ def _get_source_assets(components: Dict[str, Component]) -> Dict[str, str]:
                 _collect_recursive(file_path, project_root, all_files)
                 continue
 
-        # --- Case 2: notebook ---
+        # --- Case 2: source outside project root (pytest tmp dir, real notebook…) ---
         notebook_detected = True
 
-        # tentative best effort (peut échouer)
         try:
-            src = inspect.getsource(model.__class__)
-            if src.strip():
-                assets[f"notebook/{name}.py"] = src
+            src_file = inspect.getsourcefile(model.__class__)
+            if src_file and os.path.isfile(src_file) and "site-packages" not in src_file:
+                # Whole file so that module-level imports (torch, etc.) are preserved
+                with open(src_file, "r") as f:
+                    assets[f"notebook/{name}.py"] = f.read()
+            else:
+                # Pure in-memory class (real notebook cell) — class body only
+                src = inspect.getsource(model.__class__)
+                if src.strip():
+                    assets[f"notebook/{name}.py"] = src
         except Exception:
             pass
 

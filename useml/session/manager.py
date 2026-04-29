@@ -447,11 +447,11 @@ class Session:
             
             return snapshots[offset].path
         
-        # Direct snapshot folder name
-        snapshot_path = self._project.path / "snapshots" / snapshot_tag
+        # Direct snapshot folder name (snapshots live directly under project.path)
+        snapshot_path = self._project.path / snapshot_tag
         if not snapshot_path.exists():
             raise ValueError(f"Snapshot not found: {snapshot_tag}")
-        
+
         return snapshot_path
 
     def _import_from_mounted(
