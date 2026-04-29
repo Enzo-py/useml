@@ -240,13 +240,13 @@ class Session:
             NoSessionFocusError: If no project is currently focused.
             FileNotFoundError: If the snapshot or its source directory doesn't exist.
         """
-        # Only clear modules from previous snapshot
+        # Clear all cached workdir modules so the next import re-runs the loader
+        for name in list(sys.modules):
+            if name.startswith("useml.workdir.") or name.startswith("_useml_workdir_internal"):
+                del sys.modules[name]
+
         if self._mounted_sys_path:
             self._clear_project_modules()
-
-        for name in list(sys.modules):
-            if name.startswith("_useml_workdir_internal"):
-                del sys.modules[name]
         
         # Unmount — both \current and \workdir are accepted
         if snapshot_tag in ("\\current", "\\workdir"):
