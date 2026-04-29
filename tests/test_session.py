@@ -113,8 +113,7 @@ def test_show_dirty_warning(tmp_path, capsys):
     useml.init(vault_path=tmp_path)
     useml.new("dirty_proj")
     useml.track("m", DummyModel())
-    useml.commit("tmp")
-    
+    # Do NOT commit: _is_dirty must remain True for the warning to appear.
     useml.show()
     out = capsys.readouterr().out
     assert "WARNING" in out
