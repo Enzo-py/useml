@@ -8,6 +8,14 @@ import shutil
 from pathlib import Path
 import pytest
 
+@pytest.fixture(autouse=True)
+def fix_sys_path(tmp_path):
+    import sys
+    old = list(sys.path)
+
+    yield
+
+    sys.path[:] = old
 
 # ============================================================================
 # MODULE UTILITIES
