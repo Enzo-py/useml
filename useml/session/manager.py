@@ -53,25 +53,14 @@ class Session:
 
     @property
     def workdir(self):
-        """Returns a reference to the current working directory module namespace.
-        
-        This property enables explicit imports from the current code:
-            from useml.workdir.models import MyModel
-        
-        When a snapshot is mounted, regular imports use the mounted code:
-            from models import MyModel  # Uses mounted version
-        
-        Returns:
-            Reference to useml.workdir module for import chaining.
-            
-        Examples:
-            >>> # Compare versions
-            >>> from models.mymodel import VERSION as mounted_version
-            >>> from useml.workdir.models.mymodel import VERSION as current_version
-            >>> print(f"Mounted: {mounted_version}, Current: {current_version}")
-        """
         import useml.workdir as workdir_module
         return workdir_module
+
+    @property
+    def imports(self):
+        """Returns the ImportManager for this session."""
+        from useml.imports import ImportManager
+        return ImportManager(self)
 
     def connect(self, vault_path: Union[str, Path]) -> None:
         """Connects the session to a storage vault.
@@ -259,8 +248,8 @@ class Session:
             if name.startswith("_useml_workdir_internal"):
                 del sys.modules[name]
         
-        # Unmount
-        if snapshot_tag == "\\current":
+        # Unmount — both \current and \workdir are accepted
+        if snapshot_tag in ("\\current", "\\workdir"):
             self._mounted_snapshot = None
             self._mounted_sys_path = None
             logger.info("Unmounted snapshot (back to current workdir)")

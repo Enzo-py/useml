@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Generator
 from .session.manager import _session
 from .vault.project import Project, ProjectAlreadyExistsError
 from .vault.snapshot import Snapshot
+from .imports import NothingMountedError
 
 from . import workdir  # Enable useml.workdir.* imports
 
@@ -123,15 +124,23 @@ def load(name: str, _from: str = None):
 
 
 def mount(snapshot_tag: str):
-    """Mounts a snapshot with code isolation (context manager).
-    
+    """Mounts a snapshot for useml.workdir.* imports.
+
     Args:
-        snapshot_tag: Snapshot identifier (\\latest, \\head~N, or folder name).
-    
-    Yields:
-        Path to the mounted snapshot directory.
+        snapshot_tag: Snapshot identifier (\\latest, \\head~N, \\workdir, or folder name).
     """
     return _session.mount(snapshot_tag)
+
+
+def debug_imports() -> None:
+    """Prints a debug summary of imports visible in __main__ and available via useml.workdir.*.
+
+    Shows:
+    - All import statements found in __main__ (or active notebook cells).
+    - All module names importable via 'from useml.workdir.<name> import ...' from the
+      currently mounted snapshot.  Raises NothingMountedError if no snapshot is mounted.
+    """
+    _session.imports.debug()
 
 
 __all__ = [
@@ -141,6 +150,9 @@ __all__ = [
     "new",
     "track",
     "commit",
-    "resume",
     "show",
+    "load",
+    "mount",
+    "debug_imports",
+    "NothingMountedError",
 ]
