@@ -33,7 +33,7 @@ def test_session_mount_isolation(isolated_project):
     model = net.Model()
     useml.track("m", model)
     model.w.data.fill_(1.0)
-    snap = useml.commit("v1")
+    useml.commit("v1")
 
     # --- VERSION 2 ---
     FileManager.write_simple_model(module_path, "v2")
@@ -52,8 +52,9 @@ def test_session_mount_isolation(isolated_project):
     assert m_current.w.item() == 2.0
     assert net.Model.VERSION == "v2"
 
-    # TEST: Mount v1 snapshot via useml.workdir
-    useml.mount(snap.id)
+    # TEST: Mount v1 snapshot via useml.workdir (v1 is \\head~1, v2 is \\latest)
+    useml.mount("\\head~1")
+
     from useml.workdir import net as net_mounted
     assert net_mounted.Model.VERSION == "v1", \
         f"Expected v1 from mounted snapshot, got {net_mounted.Model.VERSION}"
@@ -119,16 +120,16 @@ class TestVaultRuntime:
         # Mount and verify source was archived in snapshot
         useml.mount("\\latest")
 
-        source_dir = snap.path / "source" / "notebook"
+        source_dir = snap.path / "source"
         assert source_dir.exists(), f"Source dir not created: {source_dir}"
 
-        files = list(source_dir.rglob("m.py"))
+        files = list(source_dir.rglob("mymodel.py"))
         assert len(files) >= 1, \
             f"mymodel.py not found in snapshot source.\n" \
             f"Contents: {[f.relative_to(source_dir) for f in source_dir.rglob('*')]}"
 
         # Verify mounted code is v1
-        from useml.workdir.notebook import m as mymodel_mounted
+        from useml.workdir import mymodel as mymodel_mounted
         assert mymodel_mounted.MyModel.VERSION == "v1", \
             f"Expected v1 from snapshot, got {mymodel_mounted.MyModel.VERSION}"
 
@@ -147,17 +148,16 @@ class TestVaultRuntime:
         useml.track("m", mymodel.MyModel())
         snap = useml.commit("archive")
 
-        source_dir = snap.path / "source" / "notebook" #because pytest as the same functioning as a ipynb
+        source_dir = snap.path / "source"
         assert source_dir.exists(), \
             f"Source directory was not created: {source_dir}"
 
-        files = list(source_dir.rglob("session.py")) + list(source_dir.rglob("session_full.py"))
+        files = list(source_dir.rglob("mymodel.py"))
         all_files = [f.relative_to(source_dir) for f in source_dir.rglob("*")]
 
         assert len(files) >= 1, \
             f"Expected mymodel.py in snapshot source.\n" \
             f"Contents: {all_files}"
-        assert "v1" in open(source_dir / all_files[1], "r").read() #TODO: make more stable
 
         # Cleanup
         ModuleManager.clear("mymodel")

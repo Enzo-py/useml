@@ -9,6 +9,7 @@ from .session.manager import _session
 from .vault.project import Project, ProjectAlreadyExistsError
 from .vault.snapshot import Snapshot
 from .imports import NothingMountedError
+from .template import Config, Model, Trainer, run_training
 
 from . import workdir  # Enable useml.workdir.* imports
 
@@ -132,6 +133,45 @@ def mount(snapshot_tag: str):
     return _session.mount(snapshot_tag)
 
 
+def train(
+    model_cls,
+    dataset,
+    config=None,
+    vault_path: str = ".useml_vault",
+) -> dict:
+    """Level-0 entry point: train a model in two lines.
+
+    Parameters
+    ----------
+    model_cls : class
+        Subclass of useml.Model (or any nn.Module).
+    dataset : str or torch.utils.data.Dataset
+        "mnist", "fashion_mnist", "cifar10", "cifar100",
+        "hf:<hf_name>", or a torch.utils.data.Dataset.
+    config : Config, optional
+        Training configuration. Defaults to Config().
+    vault_path : str
+        Directory to persist experiment snapshots.
+
+    Returns
+    -------
+    dict
+        {"train_loss": [...], "val_loss": [...]}
+
+    Example
+    -------
+    >>> import useml
+    >>> class Net(useml.Model):
+    ...     def __init__(self):
+    ...         super().__init__()
+    ...         self.fc = nn.Linear(784, 10)
+    ...     def forward(self, x):
+    ...         return self.fc(x.view(x.size(0), -1))
+    >>> useml.train(Net, "mnist")
+    """
+    return run_training(model_cls, dataset, config=config, vault_path=vault_path)
+
+
 def debug_imports() -> None:
     """Prints a debug summary of imports visible in __main__ and available via useml.workdir.*.
 
@@ -144,10 +184,12 @@ def debug_imports() -> None:
 
 
 __all__ = [
+    # Core vault API
     "init",
     "projects",
     "focus",
     "new",
+    "stash",
     "track",
     "commit",
     "show",
@@ -155,4 +197,9 @@ __all__ = [
     "mount",
     "debug_imports",
     "NothingMountedError",
+    # Level-0 template
+    "train",
+    "Model",
+    "Config",
+    "Trainer",
 ]

@@ -131,7 +131,7 @@ def _get_source_assets(components: Dict[str, Component]) -> Dict[str, str]:
     all_files: Set[str] = set()
     assets: Dict[str, str] = {}
 
-    notebook_detected = False
+    pure_notebook_detected = False
 
     # --- 1. Resolve sources ---
     for name, obj in components.items():
@@ -142,7 +142,7 @@ def _get_source_assets(components: Dict[str, Component]) -> Dict[str, str]:
         except Exception:
             file_path = None
 
-        # --- Case 1: fichier local ---
+        # --- Case 1: local project file ---
         if file_path:
             file_path = os.path.abspath(file_path)
 
@@ -151,21 +151,22 @@ def _get_source_assets(components: Dict[str, Component]) -> Dict[str, str]:
                 continue
 
         # --- Case 2: source outside project root (pytest tmp dir, real notebook…) ---
-        notebook_detected = True
-
         try:
             src_file = inspect.getsourcefile(model.__class__)
             if src_file and os.path.isfile(src_file) and "site-packages" not in src_file:
-                # Whole file so that module-level imports (torch, etc.) are preserved
+                # Real file outside project root — use actual filename so
+                # `from useml.workdir import <module>` can find it.
+                actual_filename = os.path.basename(src_file)
                 with open(src_file, "r") as f:
-                    assets[f"notebook/{name}.py"] = f.read()
+                    assets[actual_filename] = f.read()
             else:
                 # Pure in-memory class (real notebook cell) — class body only
+                pure_notebook_detected = True
                 src = inspect.getsource(model.__class__)
                 if src.strip():
-                    assets[f"notebook/{name}.py"] = src
+                    assets[f"notebook/{model.__class__.__name__}.py"] = src
         except Exception:
-            pass
+            pure_notebook_detected = True
 
     # --- 2. Load file-based sources ---
     for file_path in all_files:
@@ -177,8 +178,8 @@ def _get_source_assets(components: Dict[str, Component]) -> Dict[str, str]:
         except Exception:
             continue
 
-    # --- 3. Notebook fallback ---
-    if notebook_detected:
+    # --- 3. Notebook history fallback (only for pure in-memory classes) ---
+    if pure_notebook_detected:
         target_names = set()
 
         for obj in components.values():
