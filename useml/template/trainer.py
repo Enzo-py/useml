@@ -73,7 +73,7 @@ class Trainer:
         try:
             import useml as _useml
             _useml.init(vault_path)
-            _useml.new(project_name)
+            _useml.new(project_name, auto_focus=True)
             self._session = _useml._session
         except Exception:
             self._session = None

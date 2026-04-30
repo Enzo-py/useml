@@ -49,6 +49,7 @@ class Project:
         self,
         message: str,
         components: Dict[str, Component],
+        **metrics,
     ) -> Snapshot:
         """Create a reproducible snapshot of tracked components."""
 
@@ -94,6 +95,8 @@ class Project:
             "useml_version": version,
             "environment": "notebook" if _is_notebook() else "script",
         }
+        if metrics:
+            meta["metrics"] = metrics
 
         # --- snapshot save ---
         snapshot = Snapshot(snap_path)
