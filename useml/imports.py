@@ -1,36 +1,27 @@
 import ast
-import importlib.util
 import sys
+import importlib.util
 from pathlib import Path
 from typing import List, Optional, Tuple, TYPE_CHECKING
+
+from .errors import NothingMountedError, SnapshotModuleNotFoundError
 
 if TYPE_CHECKING:
     from .session.manager import Session
 
 
-class NothingMountedError(ImportError):
-    """Raised when ``useml.workdir.*`` is accessed without a mounted snapshot."""
-
-
 def _load_snapshot_module(real_name: str, snapshot_source_path: str):
-    """Loads a module from a snapshot source directory.
+    """Load a module from a snapshot source directory.
 
-    Temporarily inserts *snapshot_source_path* into ``sys.path`` so that
-    absolute imports inside the snapshot module resolve to files within the
-    snapshot rather than the global environment.
-
-    Args:
-        real_name: Dotted module name relative to the snapshot root
-            (e.g. ``"models.net"``).
-        snapshot_source_path: Absolute path to the snapshot ``source/``
-            directory.
+    Temporarily adds the snapshot source to sys.path so that imports within
+    the snapshot module (e.g. 'from utils import helper') resolve to files
+    inside the snapshot, not the global environment.
 
     Returns:
-        A ``(module, is_package)`` tuple. Returns ``(None, True)`` for
-        namespace packages (directory without ``__init__.py``).
+        (module, is_package) tuple, or (None, True) for namespace packages.
 
     Raises:
-        ImportError: If the module is not found inside the snapshot.
+        ImportError: If the module is not found in the snapshot.
     """
     parts = real_name.split(".")
     base = Path(snapshot_source_path).joinpath(*parts)
@@ -45,14 +36,14 @@ def _load_snapshot_module(real_name: str, snapshot_source_path: str):
         path = package_init
         is_package = True
     elif base.is_dir():
-        return None, True
+        return None, True  # namespace package — caller builds the module
     else:
-        raise ImportError(
-            f"Module {real_name!r} not found in snapshot "
-            f"{snapshot_source_path!r}."
+        raise SnapshotModuleNotFoundError(
+            f"Module {real_name!r} not found in snapshot {snapshot_source_path!r}"
         )
 
     internal_name = f"_useml_workdir_internal.{real_name}"
+
     if internal_name in sys.modules:
         return sys.modules[internal_name], is_package
 
@@ -64,6 +55,8 @@ def _load_snapshot_module(real_name: str, snapshot_source_path: str):
     mod = importlib.util.module_from_spec(spec)
     sys.modules[internal_name] = mod
 
+    # Temporarily expose the snapshot source on sys.path so that absolute
+    # imports within snapshot modules (e.g. 'import utils') resolve correctly.
     injected = snapshot_source_path not in sys.path
     if injected:
         sys.path.insert(0, snapshot_source_path)
@@ -80,11 +73,10 @@ def _load_snapshot_module(real_name: str, snapshot_source_path: str):
 
 
 class ImportManager:
-    """Introspection utilities for the ``useml.workdir`` import namespace.
+    """Manages dynamic import resolution for the useml.workdir namespace.
 
-    Provides methods to inspect what modules are importable from the currently
-    mounted snapshot and what imports are declared in ``__main__`` or notebook
-    cells.
+    Provides introspection utilities to show what's importable from a mounted
+    snapshot and what imports are declared in __main__ / notebook cells.
     """
 
     def __init__(self, session: "Session") -> None:
@@ -92,25 +84,20 @@ class ImportManager:
 
     @property
     def is_mounted(self) -> bool:
-        """True when a snapshot is currently mounted."""
         return self._session._mounted_snapshot is not None
 
     @property
     def mounted_path(self) -> Optional[Path]:
-        """Filesystem path to the mounted snapshot's ``source/`` directory."""
         if self._session._mounted_sys_path:
             return Path(self._session._mounted_sys_path)
         return None
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def available_modules(self) -> List[str]:
-        """Lists all module names importable via ``useml.workdir.*``.
-
-        Returns:
-            Sorted list of dotted module names available in the snapshot.
-
-        Raises:
-            NothingMountedError: If no snapshot is mounted.
-        """
+        """Returns all module names importable via useml.workdir.* from the snapshot."""
         if not self.is_mounted or not self.mounted_path:
             raise NothingMountedError(
                 "No snapshot is mounted. Use useml.mount('\\\\latest') first."
@@ -118,10 +105,10 @@ class ImportManager:
         return self._scan_directory(self.mounted_path)
 
     def debug(self) -> None:
-        """Prints a summary of ``__main__`` imports and available workdir modules."""
+        """Prints a summary of __main__ imports and available useml.workdir.* imports."""
         print("=== useml Import Debug ===\n")
-        print("[ __main__ & associated imports ]")
 
+        print("[ __main__ & associated imports ]")
         sections = self._collect_main_imports()
         if sections:
             for origin, lines in sections:
@@ -145,19 +132,24 @@ class ImportManager:
             try:
                 modules = self.available_modules()
                 print()
-                for mod in modules:
-                    print(f"  from useml.workdir.{mod} import ...")
-                if not modules:
+                if modules:
+                    for mod in modules:
+                        print(f"  from useml.workdir.{mod} import ...")
+                else:
                     print("  (snapshot source is empty)")
             except NothingMountedError:
                 print("  (could not list modules)")
 
         print("\n==========================")
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
     def _scan_directory(self, base: Path, prefix: str = "") -> List[str]:
         modules: List[str] = []
         for p in sorted(base.iterdir()):
-            if p.name.startswith(("_", ".")):
+            if p.name.startswith("_") or p.name.startswith("."):
                 continue
             if p.is_file() and p.suffix == ".py":
                 modules.append(prefix + p.stem)
@@ -173,42 +165,48 @@ class ImportManager:
             tree = ast.parse(source)
         except SyntaxError:
             return lines
+
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    suffix = f" as {alias.asname}" if alias.asname else ""
-                    lines.append(f"import {alias.name}{suffix}")
+                    as_part = f" as {alias.asname}" if alias.asname else ""
+                    lines.append(f"import {alias.name}{as_part}")
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
                 dots = "." * (node.level or 0)
                 names = ", ".join(
-                    a.name + (f" as {a.asname}" if a.asname else "")
-                    for a in node.names
+                    alias.name + (f" as {alias.asname}" if alias.asname else "")
+                    for alias in node.names
                 )
                 lines.append(f"from {dots}{module} import {names}")
+
         return lines
 
     def _collect_main_imports(self) -> List[Tuple[str, List[str]]]:
+        """Returns [(origin_label, [import_line, ...])] for __main__ and notebooks."""
         import __main__
 
         results: List[Tuple[str, List[str]]] = []
+
         main_file = getattr(__main__, "__file__", None)
         if main_file:
             try:
-                lines = self._parse_imports(Path(main_file).read_text())
+                source = Path(main_file).read_text()
+                lines = self._parse_imports(source)
                 if lines:
                     results.append((main_file, lines))
             except OSError:
                 pass
 
+        # IPython / Jupyter notebook cells
         try:
             from IPython import get_ipython
             shell = get_ipython()
             if shell:
+                cells = [c for c in shell.user_ns.get("In", []) if c.strip()]
                 nb_lines: List[str] = []
-                for cell in shell.user_ns.get("In", []):
-                    if cell.strip():
-                        nb_lines.extend(self._parse_imports(cell))
+                for cell in cells:
+                    nb_lines.extend(self._parse_imports(cell))
                 if nb_lines:
                     results.append(("<notebook>", nb_lines))
         except Exception:

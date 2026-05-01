@@ -1,65 +1,63 @@
 from pathlib import Path
 from typing import List, Union
-
 from .project import Project
 
-
 class Vault:
-    """Root storage directory that organises experiments into projects.
-
-    Each project corresponds to a subdirectory inside the vault. A hidden
-    `.useml_vault` marker file is created at initialisation so the codebase
-    can identify vault roots and avoid accidentally archiving them.
+    """
+    The central management system for machine learning storage.
+    
+    The Vault acts as the root directory for all experiments, organizing data into 
+    individual Projects. It handles the high-level filesystem structure and 
+    provides access to project-specific tracking.
     """
 
-    def __init__(self, path: Union[str, Path] = "vault") -> None:
-        """Initialises the vault at the given filesystem location.
+    def __init__(self, path: Union[str, Path] = "vault"):
+        """
+        Initializes the Vault at the specified filesystem location.
 
         Args:
-            path: Root directory for the vault. Created if absent.
+            path (Union[str, Path]): The root directory for the vault. 
+                Defaults to "vault".
         """
         self.path = Path(path)
         self.path.mkdir(parents=True, exist_ok=True)
-        (self.path / ".useml_vault").touch(exist_ok=True)
+        (Path(path) / ".useml_vault").touch(exist_ok=True) # creation of a vault file gate
 
     def exists(self, project_name: str) -> bool:
-        """Returns True if a project directory already exists in the vault.
-
-        Args:
-            project_name: Name of the project to look up.
-
-        Returns:
-            True if the project directory is present, False otherwise.
-        """
-        return (self.path / project_name).is_dir()
+        """Checks if a project directory exists within the vault."""
+        project_path = self.path / project_name
+        return project_path.is_dir()
 
     def get_project(self, name: str) -> Project:
-        """Returns a Project instance for the given name, creating it if needed.
+        """
+        Retrieves an existing project or initializes a new one.
 
         Args:
-            name: Unique project identifier, used as the subdirectory name.
+            name (str): The unique name of the project. This will correspond 
+                to a subdirectory within the vault.
 
         Returns:
-            An initialised Project bound to ``vault/<name>``.
+            Project: An initialized Project instance tied to the specified name.
         """
-        return Project(self.path / name)
-
+        project_path = self.path / name
+        return Project(project_path)
+    
     def projects(self) -> List[Project]:
-        """Lists all projects found inside the vault.
-
+        """Lists all projects available in the vault directory.
+        
         Returns:
-            All Project instances whose directory does not start with ``"."``.
+            List[Project]: A list of Project instances.
         """
         if not self.path.exists():
             return []
+            
         return [
-            self.get_project(d.name)
-            for d in self.path.iterdir()
+            self.get_project(d.name) 
+            for d in self.path.iterdir() 
             if d.is_dir() and not d.name.startswith(".")
         ]
 
     def __repr__(self) -> str:
-        return (
-            f"<useml.Vault path='{self.path.absolute()}' "
-            f"projects={len(self.projects())}>"
-        )
+        """Returns a string representation of the Vault instance."""
+        return f"<useml.Vault path='{self.path.absolute()}' projects={len(self.projects())}>"
+

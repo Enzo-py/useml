@@ -7,52 +7,41 @@ if TYPE_CHECKING:
 
 
 class Component:
-    """Named element of the machine learning pipeline tracked by a session.
+    """Represents a named element of the machine learning pipeline.
 
     Attributes:
-        name: Unique identifier for this component.
-        model: PyTorch model instance.
-        config: YAML-safe hyperparameter dict, derived from the Config object
-            when one is supplied.
-        useml_config: Original Config instance, preserved so the vault layer
-            can extract loss metadata and source code.
-        optimizer: Optional associated optimiser.
-        source_path: Resolved path to the file defining the model class,
-            or None for site-packages / built-in classes.
+        name (str): Unique identifier for the component.
+        model (Any): The PyTorch model instance.
+        config (Optional[Dict]): Serializable hyperparameters (YAML-safe dict).
+        useml_config (Optional[Config]): Original Config object, preserved so
+            the vault can extract loss-source code and other metadata.
+        optimizer (Optional[Any]): The PyTorch optimizer instance.
+        source_path (Optional[Path]): Path to the file defining the model class.
     """
 
     def __init__(
         self,
         name: str,
         model: Any,
-        config: Optional[Any] = None,
+        config: Optional[Any] = None,    # dict OR Config instance
         optimizer: Optional[Any] = None,
     ) -> None:
-        """Initialises a Component and normalises the config argument.
-
-        Args:
-            name: Unique identifier for this component.
-            model: PyTorch model or compatible object.
-            config: Hyperparameters as a plain dict, or a ``useml.Config``
-                instance. When a Config is passed, a YAML-safe dict is derived
-                automatically via ``Config.to_dict()``.
-            optimizer: Optional associated optimiser.
-        """
-        from ..template.config import Config as _Config
-
         self.name = name
         self.model = model
         self.optimizer = optimizer
-        self.source_path: Optional[Path] = self._resolve_source(model)
+        self.source_path: Optional[Path] = self._inspect_source(model)
 
+        # Accept either a raw dict or a Config instance.
+        # Always expose a YAML-safe dict via self.config.
+        from ..template.config import Config as _Config
         if isinstance(config, _Config):
             self.useml_config: Optional[_Config] = config
             self.config: Optional[Dict] = config.to_dict()
         else:
             self.useml_config = None
-            self.config = config
+            self.config = config          # dict or None — stored as-is
 
-    def _resolve_source(self, model: Any) -> Optional[Path]:
+    def _inspect_source(self, model: Any) -> Optional[Path]:
         try:
             source_file = inspect.getfile(model.__class__)
             path = Path(source_file).resolve()

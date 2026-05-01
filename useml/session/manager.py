@@ -8,6 +8,18 @@ from typing import Any, Dict, List, Optional, Union
 
 import torch
 
+from ..errors import (
+    NotConnectedError,
+    NoFocusError,
+    UncommittedChangesError,
+    SnapshotNotFoundError,
+    InvalidSnapshotTagError,
+    WeightsNotFoundError,
+    WeightsLoadError,
+    NoSourceDirectoryError,
+    SnapshotModuleNotFoundError,
+    WorkdirImportError,
+)
 from ..vault.core import Vault
 from ..vault.project import Project, ProjectState
 from ..vault.snapshot import Snapshot
@@ -15,17 +27,9 @@ from .component import Component
 
 logger = logging.getLogger(__name__)
 
-
-class SessionError(Exception):
-    """Base exception for session-related errors."""
-
-
-class UncommittedSessionError(SessionError):
-    """Raised when switching context with unsaved components in RAM."""
-
-
-class NoSessionFocusError(SessionError):
-    """Raised when a project is required but none is focused."""
+# Backward-compatible aliases (tests import these names from this module)
+NoSessionFocusError = NoFocusError
+UncommittedSessionError = UncommittedChangesError
 
 
 class Session:
@@ -71,10 +75,10 @@ class Session:
             All existing Project instances.
 
         Raises:
-            RuntimeError: If the session is not connected to a vault.
+            NotConnectedError: If the session is not connected to a vault.
         """
         if not self.vault:
-            raise RuntimeError(
+            raise NotConnectedError(
                 "Not connected to a vault. Call useml.init('path') first."
             )
         return self.vault.projects()
@@ -84,10 +88,10 @@ class Session:
         """The currently focused project.
 
         Raises:
-            NoSessionFocusError: If no project is focused.
+            NoFocusError: If no project is focused.
         """
         if self._project is None:
-            raise NoSessionFocusError(
+            raise NoFocusError(
                 "No project in focus. Call useml.focus('name') or "
                 "useml.new('name') first."
             )
@@ -101,16 +105,15 @@ class Session:
             force: When True, discards unsaved changes without raising.
 
         Raises:
-            UncommittedSessionError: If there are unsaved changes and
-                ``force`` is False.
+            UncommittedChangesError: If there are unsaved changes and force is False.
         """
         if self._project is not None and self._project == project_name:
             return
 
         if project_name in self._stash:
             if self._is_dirty and not force:
-                raise UncommittedSessionError(
-                    f"Unsaved components in RAM for '{project_name}'. "
+                raise UncommittedChangesError(
+                    "You have unsaved changes in RAM. "
                     "Call useml.commit() or useml.stash() first."
                 )
             state = self._stash.pop(project_name)
@@ -120,7 +123,7 @@ class Session:
             return
 
         if self._is_dirty and not force:
-            raise UncommittedSessionError(
+            raise UncommittedChangesError(
                 "You have unsaved changes in RAM. "
                 "Call useml.commit() or useml.stash() first."
             )
@@ -156,8 +159,6 @@ class Session:
             name: Unique identifier for the component.
             model: PyTorch model or compatible object.
             config: Hyperparameters as a plain dict or a ``useml.Config``.
-                When a Config is passed, the loss source is archived
-                automatically on the next commit.
             optimizer: Optional associated optimiser.
         """
         self.components[name] = Component(
@@ -204,19 +205,13 @@ class Session:
     def mount(self, snapshot_tag: str) -> None:
         """Mounts a snapshot for ``useml.workdir.*`` imports.
 
-        Does **not** modify ``sys.path`` globally. Only affects
-        ``useml.load()`` and ``useml.workdir.*`` imports.
-
         Args:
-            snapshot_tag: One of:
-                - ``"\\\\latest"`` — most recent snapshot
-                - ``"\\\\head~N"`` — N commits before latest
-                - ``"\\\\current"`` / ``"\\\\workdir"`` — unmount
-                - Direct snapshot folder name
+            snapshot_tag: Snapshot identifier — ``"\\latest"``, ``"\\head~N"``,
+                ``"\\current"`` / ``"\\workdir"`` to unmount, or a folder name.
 
         Raises:
-            NoSessionFocusError: If no project is focused.
-            FileNotFoundError: If the snapshot has no ``source/`` directory.
+            NoFocusError: If no project is focused.
+            NoSourceDirectoryError: If the snapshot has no ``source/`` directory.
         """
         if self._mounted_sys_path:
             self._clear_mounted_modules()
@@ -235,8 +230,8 @@ class Session:
         source_dir = snapshot_path / "source"
 
         if not source_dir.exists():
-            raise FileNotFoundError(
-                f"No source directory for snapshot: {snapshot_tag}"
+            raise NoSourceDirectoryError(
+                f"No source directory found for snapshot '{snapshot_tag}'."
             )
 
         self._mounted_snapshot = snapshot_tag
@@ -253,31 +248,31 @@ class Session:
         Args:
             model_name: Name of the model component to load.
             _from: Snapshot tag to load weights from. Defaults to the
-                currently mounted snapshot, or ``"\\\\latest"`` if none is
-                mounted. Accepts the same tags as :meth:`mount`.
+                currently mounted snapshot, or ``"\\latest"`` if none is mounted.
 
         Returns:
             PyTorch module with loaded weights.
 
         Raises:
-            NoSessionFocusError: If no project is focused.
-            FileNotFoundError: If the model or weights are not found.
-            RuntimeError: If weights cannot be loaded due to a code/weights
-                mismatch.
+            NoFocusError: If no project is focused.
+            WeightsNotFoundError: If the model or weights file is not found.
+            WeightsLoadError: If weights cannot be loaded due to a mismatch.
         """
         tag = _from or self._mounted_snapshot or "\\latest"
         snapshot_path = self._resolve_snapshot_path(tag)
         snapshot = Snapshot(snapshot_path)
 
         if model_name not in snapshot.components:
-            raise FileNotFoundError(
-                f"Model '{model_name}' not found in snapshot '{tag}'"
+            raise WeightsNotFoundError(
+                f"Model '{model_name}' not found in snapshot '{tag}'."
             )
 
         meta = snapshot.components[model_name]
         weights_file = snapshot_path / meta["weights"]
         if not weights_file.exists():
-            raise FileNotFoundError(f"Weights file missing: {weights_file}")
+            raise WeightsNotFoundError(
+                f"Weights file missing: {weights_file}"
+            )
 
         state_dict = torch.load(
             weights_file, map_location="cpu", weights_only=True
@@ -305,7 +300,7 @@ class Session:
         try:
             model.load_state_dict(state_dict)
         except RuntimeError as exc:
-            raise RuntimeError(
+            raise WeightsLoadError(
                 f"Failed to load '{model_name}' weights "
                 f"(code/weights mismatch): {exc}"
             ) from exc
@@ -332,18 +327,18 @@ class Session:
         """Resolves a snapshot tag to a filesystem path.
 
         Args:
-            tag: Snapshot identifier (``"\\\\latest"``, ``"\\\\head~N"``, or
-                a literal folder name).
+            tag: Snapshot identifier.
 
         Returns:
             Absolute path to the snapshot directory.
 
         Raises:
-            NoSessionFocusError: If no project is focused.
-            ValueError: If the tag is malformed or the snapshot is not found.
+            NoFocusError: If no project is focused.
+            SnapshotNotFoundError: If the tag resolves to nothing on disk.
+            InvalidSnapshotTagError: If the tag format is malformed.
         """
         if self._project is None:
-            raise NoSessionFocusError(
+            raise NoFocusError(
                 "No project in focus. Call useml.focus() first."
             )
 
@@ -351,43 +346,43 @@ class Session:
 
         if tag == "\\latest":
             if not snapshots:
-                raise ValueError("No snapshots found in project.")
+                raise SnapshotNotFoundError("No snapshots found in project.")
             return snapshots[0].path
 
         if tag.startswith("\\head~"):
             try:
                 offset = int(tag[6:])
             except ValueError:
-                raise ValueError(
-                    f"Invalid tag '{tag}'. Expected '\\\\head~N' where N is an integer."
+                raise InvalidSnapshotTagError(
+                    f"Invalid tag '{tag}'. Expected '\\head~N' where N is an integer."
                 )
             if offset < 0:
-                raise ValueError(f"Offset must be non-negative: {offset}")
+                raise InvalidSnapshotTagError(
+                    f"Offset must be non-negative, got {offset}."
+                )
             if offset >= len(snapshots):
-                raise ValueError(
-                    f"Offset {offset} out of range ({len(snapshots)} snapshots)."
+                raise SnapshotNotFoundError(
+                    f"Offset {offset} out of range ({len(snapshots)} snapshots available)."
                 )
             return snapshots[offset].path
 
         snap_path = self._project.path / tag
         if not snap_path.exists():
-            raise ValueError(f"Snapshot not found: '{tag}'")
+            raise SnapshotNotFoundError(f"Snapshot not found: '{tag}'.")
         return snap_path
 
-    def _import_from_snapshot(
-        self, module_path: str, class_name: str
-    ) -> type:
+    def _import_from_snapshot(self, module_path: str, class_name: str) -> type:
         """Imports a class from the currently mounted snapshot.
 
         Args:
-            module_path: Dotted module path (e.g. ``"models.net"``).
+            module_path: Dotted module path.
             class_name: Name of the class to import.
 
         Returns:
             The imported class object.
 
         Raises:
-            ImportError: If the class cannot be found in the snapshot.
+            SnapshotModuleNotFoundError: If the class cannot be found in the snapshot.
         """
         for key in list(sys.modules):
             if key == module_path or key.startswith(module_path + "."):
@@ -396,14 +391,12 @@ class Session:
             module = importlib.import_module(f"useml.workdir.{module_path}")
             return getattr(module, class_name)
         except (ImportError, AttributeError) as exc:
-            raise ImportError(
+            raise SnapshotModuleNotFoundError(
                 f"Cannot import {class_name} from '{module_path}' "
                 f"in mounted snapshot: {exc}"
             ) from exc
 
-    def _import_from_workdir(
-        self, module_path: str, class_name: str
-    ) -> type:
+    def _import_from_workdir(self, module_path: str, class_name: str) -> type:
         """Imports a class from the current working directory.
 
         Args:
@@ -414,7 +407,7 @@ class Session:
             The imported class object.
 
         Raises:
-            ImportError: If the class cannot be found.
+            WorkdirImportError: If the class cannot be found.
         """
         try:
             if module_path == "__main__":
@@ -423,7 +416,7 @@ class Session:
                 module = importlib.import_module(module_path)
             return getattr(module, class_name)
         except (ImportError, AttributeError) as exc:
-            raise ImportError(
+            raise WorkdirImportError(
                 f"Cannot import {class_name} from '{module_path}': {exc}"
             ) from exc
 

@@ -7,122 +7,91 @@ import torch.nn as nn
 
 from .config import Config
 from .dataset import load_dataset
+from ..errors import UnknownLossError, InvalidLossTypeError, UnknownOptimizerError
 
+
+# ------------------------------------------------------------------ #
+#  Internal builders                                                   #
+# ------------------------------------------------------------------ #
 
 _BUILTIN_LOSSES = {
     "cross_entropy": nn.CrossEntropyLoss,
-    "mse": nn.MSELoss,
-    "bce": nn.BCEWithLogitsLoss,
-    "l1": nn.L1Loss,
+    "mse":           nn.MSELoss,
+    "bce":           nn.BCEWithLogitsLoss,
+    "l1":            nn.L1Loss,
 }
 
 _BUILTIN_OPTIMIZERS = {
-    "adam": lambda p, lr: torch.optim.Adam(p, lr=lr),
+    "adam":  lambda p, lr: torch.optim.Adam(p, lr=lr),
     "adamw": lambda p, lr: torch.optim.AdamW(p, lr=lr),
-    "sgd": lambda p, lr: torch.optim.SGD(p, lr=lr, momentum=0.9),
+    "sgd":   lambda p, lr: torch.optim.SGD(p, lr=lr, momentum=0.9),
 }
 
 
 def _build_loss(config: Config) -> nn.Module:
-    """Instantiates a loss function from the Config specification.
-
-    Args:
-        config: Active training configuration.
-
-    Returns:
-        An ``nn.Module`` ready for use as the training criterion.
-
-    Raises:
-        ValueError: If ``config.loss`` is an unrecognised string key.
-        TypeError: If ``config.loss`` is not a supported type.
-    """
+    """Instantiate a loss from config.loss (str | class | instance | callable)."""
     loss = config.loss
 
     if isinstance(loss, str):
         key = loss.lower()
         if key not in _BUILTIN_LOSSES:
-            raise ValueError(
-                f"Unknown loss '{loss}'. "
-                f"Built-in options: {list(_BUILTIN_LOSSES)}."
+            raise UnknownLossError(
+                f"Unknown loss '{loss}'. Built-in choices: {list(_BUILTIN_LOSSES)}."
             )
         return _BUILTIN_LOSSES[key]()
 
     if isinstance(loss, nn.Module):
-        return loss
+        return loss                              # already instantiated
 
     if isinstance(loss, type) and issubclass(loss, nn.Module):
-        return loss()
+        return loss()                            # instantiate the class
 
     if callable(loss):
+        # Wrap a plain function so the training loop sees an nn.Module
         _fn = loss
-
         class _WrappedLoss(nn.Module):
             def forward(self, pred, target):
                 return _fn(pred, target)
-
         return _WrappedLoss()
 
-    raise TypeError(
-        f"config.loss must be a string, nn.Module subclass, nn.Module instance, "
+    raise InvalidLossTypeError(
+        f"config.loss must be a str, nn.Module subclass, nn.Module instance, "
         f"or callable. Got {type(loss).__name__}."
     )
 
 
 def _build_optimizer(model: nn.Module, config: Config) -> torch.optim.Optimizer:
-    """Instantiates an optimiser from the Config specification.
-
-    Args:
-        model: The model whose parameters the optimiser will update.
-        config: Active training configuration.
-
-    Returns:
-        A configured ``torch.optim.Optimizer`` instance.
-
-    Raises:
-        ValueError: If ``config.optimizer`` is not a recognised key.
-    """
     key = config.optimizer.lower()
     if key not in _BUILTIN_OPTIMIZERS:
-        raise ValueError(
-            f"Unknown optimizer '{config.optimizer}'. "
-            f"Options: {list(_BUILTIN_OPTIMIZERS)}."
+        raise UnknownOptimizerError(
+            f"Unknown optimizer '{config.optimizer}'. Choices: {list(_BUILTIN_OPTIMIZERS)}."
         )
     return _BUILTIN_OPTIMIZERS[key](model.parameters(), config.lr)
 
 
 def _build_model(model_cls: Type[nn.Module], config: Config) -> nn.Module:
-    """Instantiates a model class, forwarding the Config when accepted.
-
-    Args:
-        model_cls: Model class to instantiate.
-        config: Active training configuration.
-
-    Returns:
-        An initialised model instance.
-    """
+    """Instantiate model, passing config if the constructor accepts it."""
     sig = inspect.signature(model_cls.__init__)
-    for param in list(sig.parameters.keys())[1:]:
+    for param in list(sig.parameters.keys())[1:]:   # skip 'self'
         if param in ("config", "cfg"):
             return model_cls(**{param: config})
     return model_cls()
 
 
+# ------------------------------------------------------------------ #
+#  Trainer                                                             #
+# ------------------------------------------------------------------ #
+
 class Trainer:
-    """Core training loop with optional vault checkpoint integration.
+    """Core training loop with vault checkpoint integration.
 
     Checkpoints are saved to the currently focused project in the active
-    useml session. Call ``useml.init()`` and ``useml.new()`` / ``useml.focus()``
-    before instantiating the Trainer to enable checkpointing. If no session is
-    active or no project is focused, training runs without saving snapshots.
+    useml session (useml.init + useml.new/focus must be called beforehand).
+    If no session is active or no project is focused, training runs without
+    saving snapshots.
     """
 
-    def __init__(self, model: nn.Module, config: Config) -> None:
-        """Sets up the model, optimiser, criterion, and optional session link.
-
-        Args:
-            model: The model to train.
-            config: Training configuration.
-        """
+    def __init__(self, model: nn.Module, config: Config):
         self.model = model.to(config.device)
         self.config = config
         self.optimizer = _build_optimizer(model, config)
@@ -132,48 +101,42 @@ class Trainer:
     def _get_active_session(self):
         try:
             import useml as _useml
-            _ = _useml._session.project  # raises if no focus
-            return _useml._session
+            session = _useml._session
+            # Only use the session if a vault is connected AND a project is focused
+            _ = session.project  # raises RuntimeError if no focus
+            return session
         except Exception:
             return None
 
+    # ---------------------------------------------------------------- #
+
     def run(self, train_loader, val_loader) -> dict:
-        """Runs the full training loop.
-
-        Args:
-            train_loader: DataLoader for the training set.
-            val_loader: DataLoader for the validation set.
-
-        Returns:
-            History dict with keys ``"train_loss"`` and ``"val_loss"``,
-            each containing one float per epoch.
-        """
         best_val = float("inf")
         history = {"train_loss": [], "val_loss": []}
 
-        print(f"\n{'=' * 55}")
-        print(
-            f"  useml training — {self.config.epochs} epochs "
-            f"on {self.config.device}  |  loss: {self.config.loss_name()}"
-        )
-        print(f"{'=' * 55}")
+        print(f"\n{'='*55}")
+        print(f"  useml training — {self.config.epochs} epochs "
+              f"on {self.config.device}  |  loss: {self.config.loss_name()}")
+        print(f"{'='*55}")
 
         for epoch in range(1, self.config.epochs + 1):
             t0 = time.time()
             train_loss = self._train_epoch(train_loader)
-            val_loss = self._val_epoch(val_loader)
-            elapsed = time.time() - t0
+            val_loss   = self._val_epoch(val_loader)
+            elapsed    = time.time() - t0
 
             history["train_loss"].append(train_loss)
             history["val_loss"].append(val_loss)
-            best_val = min(best_val, val_loss)
+
+            if val_loss < best_val:
+                best_val = val_loss
 
             self._print_epoch(epoch, train_loss, val_loss, elapsed)
             self._maybe_checkpoint(epoch, val_loss)
 
-        print(f"{'=' * 55}")
+        print(f"{'='*55}")
         print(f"  Best val_loss: {best_val:.4f}")
-        print(f"{'=' * 55}\n")
+        print(f"{'='*55}\n")
 
         return history
 
@@ -203,13 +166,11 @@ class Trainer:
                 count += x.size(0)
         return total / count if count else 0.0
 
-    def _print_epoch(
-        self, epoch: int, train: float, val: float, elapsed: float
-    ) -> None:
-        width = len(str(self.config.epochs))
+    def _print_epoch(self, epoch: int, train: float, val: float, t: float):
+        w = len(str(self.config.epochs))
         print(
-            f"  epoch {epoch:{width}d}/{self.config.epochs} │ "
-            f"train {train:.4f} │ val {val:.4f} │ {elapsed:.1f}s"
+            f"  epoch {epoch:{w}d}/{self.config.epochs} │ "
+            f"train {train:.4f} │ val {val:.4f} │ {t:.1f}s"
         )
 
     def _maybe_checkpoint(self, epoch: int, val_loss: float) -> None:
@@ -217,40 +178,51 @@ class Trainer:
             return
         if epoch % self.config.checkpoint_every != 0:
             return
-        self._session.track("model", self.model, config=self.config)
-        self._session.commit(
-            message=f"epoch {epoch}",
-            epoch=epoch,
-            val_loss=round(val_loss, 6),
-        )
+        try:
+            # Pass the Config instance so the vault can extract loss source
+            self._session.track("model", self.model, config=self.config)
+            self._session.commit(
+                message=f"epoch {epoch}",
+                epoch=epoch,
+                val_loss=round(val_loss, 6),
+            )
+        except Exception:
+            pass
 
+
+# ------------------------------------------------------------------ #
+#  Public entry point                                                  #
+# ------------------------------------------------------------------ #
 
 def run_training(
     model_cls: Type[nn.Module],
     dataset: Any,
     config: Optional[Config] = None,
 ) -> dict:
-    """Level-0 entry point — trains a model in two lines.
+    """Level-0 entry point — train a model in two lines.
 
-    Snapshots are saved to the currently focused project in the active useml
-    session. Call ``useml.init()`` and ``useml.new()`` / ``useml.focus()``
-    before invoking this function to enable checkpointing; omitting them runs
-    training without saving.
+    Snapshots are saved to the currently focused project in the active
+    useml session. Call useml.init() + useml.new()/focus() beforehand to
+    enable checkpointing; omitting them trains without saving.
 
-    Args:
-        model_cls: Model class (subclass of :class:`useml.Model` or any
-            ``nn.Module``).
-        dataset: Built-in name (``"mnist"``, ``"cifar10"``, …),
-            ``"hf:<name>"`` for HuggingFace, or a
-            ``torch.utils.data.Dataset``.
-        config: Training configuration. Defaults to :class:`Config` with all
-            defaults.
+    Parameters
+    ----------
+    model_cls : class
+        Subclass of useml.Model (or any nn.Module).
+    dataset : str or torch.utils.data.Dataset
+        Built-in name ("mnist", "cifar10", …), "hf:<name>", or a Dataset.
+    config : Config, optional
+        Training configuration (loss, optimizer, epochs, …).
 
-    Returns:
-        History dict with keys ``"train_loss"`` and ``"val_loss"``.
+    Returns
+    -------
+    dict  {"train_loss": [...], "val_loss": [...]}
     """
     if config is None:
         config = Config()
+
     train_loader, val_loader = load_dataset(dataset, config)
     model = _build_model(model_cls, config)
-    return Trainer(model=model, config=config).run(train_loader, val_loader)
+
+    trainer = Trainer(model=model, config=config)
+    return trainer.run(train_loader, val_loader)

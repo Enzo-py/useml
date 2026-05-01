@@ -1,5 +1,3 @@
-.claude
-
 # --- Python Build & Distribution ---
 dist/
 build/
@@ -24,5 +22,5 @@ __pycache__/
 *.pth
 *.ckpt
 
-# testing / manual playground (entire folder and vaults are ignored)
-playground/
+# testing
+playground
