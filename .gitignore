@@ -24,7 +24,8 @@ __pycache__/
 *.pth
 *.ckpt
 
-# testing
+# testing / manual playground (entire folder and vaults are ignored)
+playground/
 playground.py
 playground.ipynb
 /models

@@ -64,22 +64,30 @@ class Project:
         except importlib.metadata.PackageNotFoundError:
             version = "dev-local"
 
-        # --- extract inline sources ---
+        # --- extract inline sources (models + custom losses) ---
         inline_sources = _get_source_assets(components)
-        print(inline_sources)
 
-        # --- build manifest (STRICT: only structure) ---
+        # --- build manifest ---
         component_manifest = {}
         for name, comp in components.items():
             model_class = comp.model.__class__
-            
+
+            # loss metadata — read from useml_config when available
+            if comp.useml_config is not None:
+                loss_class = comp.useml_config.loss_name()
+                loss_hash  = comp.useml_config.loss_hash()
+            else:
+                loss_class = None
+                loss_hash  = None
+
             component_manifest[name] = {
-                "source": f"source/{name}.py",
-                "class_name": model_class.__name__,  # Ex: "MyModel", pas "Component"
-                "module_path": model_class.__module__,  # Ex: "models.mymodel"
-                "weights": f"weights/{name}.pth",
-                "config": f"config/{name}.yaml" if comp.config else None,
-                "code_hash": self._get_code_hash(model_class),
+                "class_name":  model_class.__name__,
+                "module_path": model_class.__module__,
+                "weights":     f"weights/{name}.pth",
+                "config":      f"configs/{name}.yaml" if comp.config else None,
+                "code_hash":   self._get_code_hash(model_class),
+                "loss_class":  loss_class,
+                "loss_hash":   loss_hash,
             }
 
         manifest = {

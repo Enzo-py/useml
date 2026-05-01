@@ -1,19 +1,20 @@
 import inspect
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
+
+if TYPE_CHECKING:
+    from ..template.config import Config
 
 
 class Component:
     """Represents a named element of the machine learning pipeline.
 
-    A Component bundles a PyTorch model with its associated configuration
-    and optimizer. It also automatically attempts to locate the source code
-    defining the model's class for auditability.
-
     Attributes:
         name (str): Unique identifier for the component.
         model (Any): The PyTorch model instance.
-        config (Optional[Dict]): Hyperparameters or architectural metadata.
+        config (Optional[Dict]): Serializable hyperparameters (YAML-safe dict).
+        useml_config (Optional[Config]): Original Config object, preserved so
+            the vault can extract loss-source code and other metadata.
         optimizer (Optional[Any]): The PyTorch optimizer instance.
         source_path (Optional[Path]): Path to the file defining the model class.
     """
@@ -22,41 +23,30 @@ class Component:
         self,
         name: str,
         model: Any,
-        config: Optional[Dict[str, Any]] = None,
+        config: Optional[Any] = None,    # dict OR Config instance
         optimizer: Optional[Any] = None,
     ) -> None:
-        """Initializes the Component and inspects the model source.
-
-        Args:
-            name (str): Unique name (e.g., 'encoder', 'classifier').
-            model (Any): PyTorch model object.
-            config (Optional[Dict]): Dictionary of parameters.
-            optimizer (Optional[Any]): Optimizer object associated with the model.
-        """
         self.name = name
         self.model = model
-        self.config = config
         self.optimizer = optimizer
         self.source_path: Optional[Path] = self._inspect_source(model)
 
+        # Accept either a raw dict or a Config instance.
+        # Always expose a YAML-safe dict via self.config.
+        from ..template.config import Config as _Config
+        if isinstance(config, _Config):
+            self.useml_config: Optional[_Config] = config
+            self.config: Optional[Dict] = config.to_dict()
+        else:
+            self.useml_config = None
+            self.config = config          # dict or None — stored as-is
+
     def _inspect_source(self, model: Any) -> Optional[Path]:
-        """Identifies the file path where the model's class is defined.
-
-        Args:
-            model (Any): The model instance to inspect.
-
-        Returns:
-            Optional[Path]: The absolute path to the source file, or None if
-                the inspection fails or points to a built-in/compiled module.
-        """
         try:
             source_file = inspect.getfile(model.__class__)
             path = Path(source_file).resolve()
-
-            # Optional: Ignore source code if it's from site-packages (library code)
             if "site-packages" in str(path):
                 return None
-
             return path
         except (TypeError, OSError):
             return None

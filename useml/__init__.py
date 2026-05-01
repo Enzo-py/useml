@@ -9,7 +9,7 @@ from .session.manager import _session
 from .vault.project import Project, ProjectAlreadyExistsError
 from .vault.snapshot import Snapshot
 from .imports import NothingMountedError
-from .template import Config, Model, Trainer, run_training
+from .template import Config, Loss, Model, Trainer, run_training
 
 from . import workdir  # Enable useml.workdir.* imports
 
@@ -59,17 +59,18 @@ def stash() -> None:
 
 
 def track(
-    name: str, 
-    model: Any, 
-    config: Optional[Dict[str, Any]] = None, 
-    optimizer: Optional[Any] = None
+    name: str,
+    model: Any,
+    config: Optional[Any] = None,   # dict | useml.Config
+    optimizer: Optional[Any] = None,
 ) -> None:
     """Registers a model and its optional config/optimizer for the current session.
-    
+
     Args:
         name (str): Unique name for the component.
         model (Any): PyTorch model or similar object.
-        config (Dict): Hyperparameters or configuration.
+        config: Plain dict of hyperparams, or a useml.Config instance.
+                When a Config is passed the loss source is archived automatically.
         optimizer (Any): Associated optimizer.
     """
     _session.track(name, model, config, optimizer)
@@ -137,9 +138,12 @@ def train(
     model_cls,
     dataset,
     config=None,
-    vault_path: str = ".useml_vault",
 ) -> dict:
     """Level-0 entry point: train a model in two lines.
+
+    Snapshots are saved to the currently focused project. Call
+    useml.init() + useml.new()/focus() before training to enable
+    checkpointing; omitting them trains without saving.
 
     Parameters
     ----------
@@ -150,8 +154,6 @@ def train(
         "hf:<hf_name>", or a torch.utils.data.Dataset.
     config : Config, optional
         Training configuration. Defaults to Config().
-    vault_path : str
-        Directory to persist experiment snapshots.
 
     Returns
     -------
@@ -161,6 +163,8 @@ def train(
     Example
     -------
     >>> import useml
+    >>> useml.init("vault")
+    >>> useml.new("my-experiment")
     >>> class Net(useml.Model):
     ...     def __init__(self):
     ...         super().__init__()
@@ -169,7 +173,7 @@ def train(
     ...         return self.fc(x.view(x.size(0), -1))
     >>> useml.train(Net, "mnist")
     """
-    return run_training(model_cls, dataset, config=config, vault_path=vault_path)
+    return run_training(model_cls, dataset, config=config)
 
 
 def debug_imports() -> None:
@@ -199,6 +203,7 @@ __all__ = [
     "NothingMountedError",
     # Level-0 template
     "train",
+    "Loss",
     "Model",
     "Config",
     "Trainer",

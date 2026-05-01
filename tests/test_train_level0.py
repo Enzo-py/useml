@@ -131,9 +131,10 @@ class TestVaultIntegration:
 
     def test_checkpoint_dir_created(self, tmp_path):
         """run_training must create at least one snapshot on disk."""
+        useml.init(str(tmp_path / "vault"))
+        useml.new("ANDNet")
         config = _cfg(epochs=30, checkpoint_every=10)
-        run_training(ANDNet, ANDDataset(), config=config,
-                     vault_path=str(tmp_path / "vault"))
+        run_training(ANDNet, ANDDataset(), config=config)
 
         project_dir = tmp_path / "vault" / "ANDNet"
         assert project_dir.exists(), "Project directory missing"
@@ -142,9 +143,10 @@ class TestVaultIntegration:
 
     def test_weights_file_present(self, tmp_path):
         """Every snapshot must contain weights/model.pth."""
+        useml.init(str(tmp_path / "vault"))
+        useml.new("ANDNet")
         config = _cfg(epochs=10, checkpoint_every=5)
-        run_training(ANDNet, ANDDataset(), config=config,
-                     vault_path=str(tmp_path / "vault"))
+        run_training(ANDNet, ANDDataset(), config=config)
 
         project_dir = tmp_path / "vault" / "ANDNet"
         snaps = [d for d in project_dir.iterdir() if d.name.startswith("snap_")]
@@ -155,11 +157,11 @@ class TestVaultIntegration:
 
     def test_load_latest_after_training(self, tmp_path):
         """useml.load() must return a model with correct weights after run_training."""
+        useml.init(str(tmp_path / "vault"))
+        useml.new("ANDNet")
         config = _cfg(epochs=300, checkpoint_every=100)
-        run_training(ANDNet, ANDDataset(), config=config,
-                     vault_path=str(tmp_path / "vault"))
+        run_training(ANDNet, ANDDataset(), config=config)
 
-        # run_training already set up the session — load directly
         loaded = useml.load("model")
         assert isinstance(loaded, ANDNet)
         assert _predict_and11(loaded) == 1, \
@@ -167,25 +169,26 @@ class TestVaultIntegration:
 
     def test_load_with_explicit_from(self, tmp_path):
         """useml.load(_from='\\latest') must return a usable ANDNet."""
+        useml.init(str(tmp_path / "vault"))
+        useml.new("ANDNet")
         config = _cfg(epochs=100, checkpoint_every=50)
-        run_training(ANDNet, ANDDataset(), config=config,
-                     vault_path=str(tmp_path / "vault"))
+        run_training(ANDNet, ANDDataset(), config=config)
 
         loaded = useml.load("model", _from="\\latest")
         assert isinstance(loaded, ANDNet)
 
     def test_multiple_checkpoints_ordered(self, tmp_path):
         """\\latest must be the most recent checkpoint (highest epoch)."""
+        useml.init(str(tmp_path / "vault"))
+        useml.new("ANDNet")
         config = _cfg(epochs=30, checkpoint_every=10)
-        run_training(ANDNet, ANDDataset(), config=config,
-                     vault_path=str(tmp_path / "vault"))
+        run_training(ANDNet, ANDDataset(), config=config)
 
         project_dir = tmp_path / "vault" / "ANDNet"
         snaps = sorted(
             [d for d in project_dir.iterdir() if d.name.startswith("snap_")],
             key=lambda d: d.name,
         )
-        # \\latest resolves to snapshots[0] (newest-first order)
         loaded_latest = useml.load("model", _from="\\latest")
         loaded_head0 = useml.load("model", _from=snaps[-1].name)
 
@@ -201,11 +204,10 @@ class TestVaultIntegration:
 
 class TestPublicAPI:
 
-    def test_useml_train_returns_history(self, tmp_path):
-        """useml.train() must return a dict with train_loss and val_loss."""
+    def test_useml_train_returns_history(self):
+        """useml.train() must return a dict with train_loss and val_loss (no vault)."""
         config = _cfg(epochs=10)
-        history = useml.train(ANDNet, ANDDataset(), config=config,
-                              vault_path=str(tmp_path / "vault"))
+        history = useml.train(ANDNet, ANDDataset(), config=config)
 
         assert isinstance(history, dict)
         assert "train_loss" in history and "val_loss" in history
