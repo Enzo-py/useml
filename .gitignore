@@ -26,7 +26,3 @@ __pycache__/
 
 # testing / manual playground (entire folder and vaults are ignored)
 playground/
-playground.py
-playground.ipynb
-/models
-/.vault

@@ -1,11 +1,9 @@
-# useml/session/manager.py (sections à améliorer)
-
 import hashlib
 import importlib
 import inspect
 import logging
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import torch
@@ -19,30 +17,25 @@ logger = logging.getLogger(__name__)
 
 
 class SessionError(Exception):
-    """Base exception for all session-related errors."""
-    pass
+    """Base exception for session-related errors."""
 
 
 class UncommittedSessionError(SessionError):
-    """Raised when trying to switch context with unsaved components in RAM."""
-    pass
+    """Raised when switching context with unsaved components in RAM."""
 
 
 class NoSessionFocusError(SessionError):
-    """Raised when trying to access current session project when none is focused."""
-    pass
+    """Raised when a project is required but none is focused."""
 
 
 class Session:
-    """Manages the global state of the UseML workspace.
+    """Global workspace that bridges the public API and the vault layer.
 
-    This manager handles the connection to a storage Vault and maintains
-    the focus on a specific Project. It acts as the bridge between functional
-    API calls and the underlying storage hierarchy.
+    Holds the connection to a Vault, the currently focused Project, the set of
+    tracked Components, and the mounted snapshot for workdir imports.
     """
 
     def __init__(self) -> None:
-        """Initializes a blank Session."""
         self.vault: Optional[Vault] = None
         self._project: Optional[Project] = None
         self.components: Dict[str, Component] = {}
@@ -53,12 +46,12 @@ class Session:
 
     @property
     def workdir(self):
-        import useml.workdir as workdir_module
-        return workdir_module
+        import useml.workdir as _workdir
+        return _workdir
 
     @property
     def imports(self):
-        """Returns the ImportManager for this session."""
+        """Returns the ImportManager for the active session."""
         from useml.imports import ImportManager
         return ImportManager(self)
 
@@ -69,13 +62,13 @@ class Session:
             vault_path: Path to the root storage directory.
         """
         self.vault = Vault(Path(vault_path))
-        logger.info(f"Connected to vault: {self.vault.path}")
+        logger.info("Connected to vault: %s", self.vault.path)
 
     def get_projects(self) -> List[Project]:
-        """Lists all projects available in the connected vault.
+        """Lists all projects in the connected vault.
 
         Returns:
-            A list of existing project instances.
+            All existing Project instances.
 
         Raises:
             RuntimeError: If the session is not connected to a vault.
@@ -88,13 +81,10 @@ class Session:
 
     @property
     def project(self) -> Project:
-        """Returns the currently focused project.
-        
-        Returns:
-            The focused Project instance.
-            
+        """The currently focused project.
+
         Raises:
-            NoSessionFocusError: If no project is currently focused.
+            NoSessionFocusError: If no project is focused.
         """
         if self._project is None:
             raise NoSessionFocusError(
@@ -104,58 +94,51 @@ class Session:
         return self._project
 
     def set_focus(self, project_name: str, force: bool = False) -> None:
-        """Sets the active project focus.
-        
+        """Switches focus to the named project.
+
         Args:
             project_name: Name of the project to focus on.
-            force: If True, discard unsaved changes without raising an error.
-            
+            force: When True, discards unsaved changes without raising.
+
         Raises:
-            UncommittedSessionError: If there are unsaved changes and force=False.
+            UncommittedSessionError: If there are unsaved changes and
+                ``force`` is False.
         """
-        # Check if already focused on the same project
         if self._project is not None and self._project == project_name:
             return
 
-        # Check if project is in RAM stash
         if project_name in self._stash:
             if self._is_dirty and not force:
                 raise UncommittedSessionError(
-                    f"Project '{project_name}' has unsaved changes in RAM. "
-                    f"Please use useml.commit() or useml.stash()."
+                    f"Unsaved components in RAM for '{project_name}'. "
+                    "Call useml.commit() or useml.stash() first."
                 )
-            
             state = self._stash.pop(project_name)
             self._project = state.project
             self.components = state.components
             self._is_dirty = state.is_dirty
             return
 
-        # Dirty state guard for new focus from disk
         if self._is_dirty and not force:
             raise UncommittedSessionError(
-                f"Project '{project_name}' has unsaved changes in RAM. "
-                f"Please use useml.commit() or useml.stash()."
+                "You have unsaved changes in RAM. "
+                "Call useml.commit() or useml.stash() first."
             )
 
-        # Load project from vault
         self._project = self.vault.get_project(project_name)
         self.components = {}
         self._is_dirty = False
 
     def stash(self) -> None:
-        """Puts the current project state into the RAM stash and clears active focus."""
+        """Pushes the current project state into the RAM stash and resets focus."""
         if self._project is None:
             return
-            
         name = self._project.path.name
         self._stash[name] = ProjectState(
             project=self._project,
             components=self.components.copy(),
-            is_dirty=self._is_dirty
+            is_dirty=self._is_dirty,
         )
-        
-        # Reset internal state
         self._project = None
         self.components = {}
         self._is_dirty = False
@@ -164,381 +147,291 @@ class Session:
         self,
         name: str,
         model: Any,
-        config: Optional[Any] = None,   # dict | Config instance
+        config: Optional[Any] = None,
         optimizer: Optional[Any] = None,
     ) -> None:
         """Registers a component for the current session.
 
         Args:
             name: Unique identifier for the component.
-            model: PyTorch model or similar object.
-            config: Optional hyperparameters — a plain dict or a useml.Config.
-                    When a Config is passed the loss source is archived automatically.
-            optimizer: Optional associated optimizer.
+            model: PyTorch model or compatible object.
+            config: Hyperparameters as a plain dict or a ``useml.Config``.
+                When a Config is passed, the loss source is archived
+                automatically on the next commit.
+            optimizer: Optional associated optimiser.
         """
         self.components[name] = Component(
             name=name, model=model, config=config, optimizer=optimizer
         )
         self._is_dirty = True
 
-    def commit(self, message: str, **metrics: Any) -> Any:
-        """Saves a snapshot to the focused project.
-        
+    def commit(self, message: str, **metrics: Any) -> Snapshot:
+        """Saves a snapshot of all tracked components to the focused project.
+
         Args:
             message: Description of the changes or experiment state.
-            **metrics: Quantitative results (e.g., loss=0.1, accuracy=0.95).
-            
+            **metrics: Quantitative results (e.g. ``loss=0.1``).
+
         Returns:
-            The created snapshot instance.
+            The created Snapshot instance.
         """
         snap = self.project.commit(
             message=message, components=self.components, **metrics
         )
         self._is_dirty = False
         return snap
-    
+
     def untrack(self, name: str) -> None:
         """Removes a component from tracking.
-        
+
         Args:
-            name: Name of the component to untrack.
+            name: Name of the component to remove.
         """
         if name not in self.components:
             return
 
-        # Check if component exists in the latest snapshot on disk
         exists_on_disk = False
         if self._project and self._project.log():
-            latest = self._project.log()[0]
-            exists_on_disk = name in latest.components
+            exists_on_disk = name in self._project.log()[0].components
 
         del self.components[name]
 
         if exists_on_disk:
-            # Removed a saved component -> dirty state
             self._is_dirty = True
-        else:
-            # Removed an unsaved component -> recalculate dirty state
-            self._is_dirty = self._check_if_still_dirty_after_removal()
+        elif not self.components:
+            self._is_dirty = False
 
     def mount(self, snapshot_tag: str) -> None:
-        """Mounts a snapshot for useml-managed code access.
-        
-        This does NOT modify global sys.path. It only affects:
-        - useml.load() behavior
-        - useml.workdir.* imports
-        
-        Regular Python imports (from models import X) are unaffected.
-        
+        """Mounts a snapshot for ``useml.workdir.*`` imports.
+
+        Does **not** modify ``sys.path`` globally. Only affects
+        ``useml.load()`` and ``useml.workdir.*`` imports.
+
         Args:
-            snapshot_tag: Snapshot identifier. Supports:
-                - "\\latest": Most recent snapshot
-                - "\\head~N": N commits before latest (e.g., "\\head~2")
-                - "\\current": Current working directory (unmount)
+            snapshot_tag: One of:
+                - ``"\\\\latest"`` — most recent snapshot
+                - ``"\\\\head~N"`` — N commits before latest
+                - ``"\\\\current"`` / ``"\\\\workdir"`` — unmount
                 - Direct snapshot folder name
-                
+
         Raises:
-            NoSessionFocusError: If no project is currently focused.
-            FileNotFoundError: If the snapshot or its source directory doesn't exist.
+            NoSessionFocusError: If no project is focused.
+            FileNotFoundError: If the snapshot has no ``source/`` directory.
         """
-        # Only clear modules from previous snapshot
         if self._mounted_sys_path:
-            self._clear_project_modules()
+            self._clear_mounted_modules()
 
         for name in list(sys.modules):
             if name.startswith("_useml_workdir_internal"):
                 del sys.modules[name]
-        
-        # Unmount — both \current and \workdir are accepted
+
         if snapshot_tag in ("\\current", "\\workdir"):
             self._mounted_snapshot = None
             self._mounted_sys_path = None
             logger.info("Unmounted snapshot (back to current workdir)")
             return
 
-        # Resolve snapshot path
         snapshot_path = self._resolve_snapshot_path(snapshot_tag)
         source_dir = snapshot_path / "source"
 
         if not source_dir.exists():
             raise FileNotFoundError(
-                f"No source directory found for snapshot: {snapshot_tag}"
+                f"No source directory for snapshot: {snapshot_tag}"
             )
 
-        # Store mount info (don't modify global sys.path or sys.modules)
         self._mounted_snapshot = snapshot_tag
         self._mounted_sys_path = str(source_dir)
-        
-        logger.info(f"Mounted snapshot: {snapshot_tag}")
+        logger.info("Mounted snapshot: %s", snapshot_tag)
 
     def load(
-        self, 
-        model_name: str, 
-        _from: Optional[str] = None
+        self,
+        model_name: str,
+        _from: Optional[str] = None,
     ) -> torch.nn.Module:
-        """Loads a saved model with its weights.
-        
+        """Loads a saved model with its weights from a snapshot.
+
         Args:
-            model_name: Name of the model to load.
-            _from: Snapshot to load weights from. If None, uses currently mounted
-                   snapshot or "\\latest". Supports same tags as mount().
-                   
+            model_name: Name of the model component to load.
+            _from: Snapshot tag to load weights from. Defaults to the
+                currently mounted snapshot, or ``"\\\\latest"`` if none is
+                mounted. Accepts the same tags as :meth:`mount`.
+
         Returns:
             PyTorch module with loaded weights.
-            
+
         Raises:
-            NoSessionFocusError: If no project is currently focused.
-            FileNotFoundError: If model weights are not found.
-            RuntimeError: If weights fail to load due to code/weights mismatch.
-            
-        Examples:
-            >>> # Load with full code isolation
-            >>> useml.mount("\\latest")
-            >>> model = useml.load("model1")
-            
-            >>> # Load weights into current code
-            >>> useml.mount("\\current")
-            >>> model = useml.load("model1", _from="\\latest")
+            NoSessionFocusError: If no project is focused.
+            FileNotFoundError: If the model or weights are not found.
+            RuntimeError: If weights cannot be loaded due to a code/weights
+                mismatch.
         """
-        # Determine weights source
-        weights_snapshot_tag = (
-            _from or self._mounted_snapshot or "\\latest"
-        )
-        snapshot_path = self._resolve_snapshot_path(weights_snapshot_tag)
-        
-        # Load snapshot to get component metadata
+        tag = _from or self._mounted_snapshot or "\\latest"
+        snapshot_path = self._resolve_snapshot_path(tag)
         snapshot = Snapshot(snapshot_path)
-        
+
         if model_name not in snapshot.components:
             raise FileNotFoundError(
-                f"Model '{model_name}' not found in "
-                f"snapshot {weights_snapshot_tag}"
+                f"Model '{model_name}' not found in snapshot '{tag}'"
             )
-        
-        component_meta = snapshot.components[model_name]
-        
-        # Load weights file
-        weights_file = snapshot_path / component_meta["weights"]
+
+        meta = snapshot.components[model_name]
+        weights_file = snapshot_path / meta["weights"]
         if not weights_file.exists():
-            raise FileNotFoundError(
-                f"Weights file not found: {weights_file}"
-            )
-        
+            raise FileNotFoundError(f"Weights file missing: {weights_file}")
+
         state_dict = torch.load(
-            weights_file, 
-            map_location="cpu", 
-            weights_only=True
+            weights_file, map_location="cpu", weights_only=True
         )
-        
-        # Get code hash from manifest
-        model_code_hash = component_meta.get("code_hash", None)
-        
-        # Import model class based on isolation mode
-        module_path = component_meta["module_path"]
-        class_name = component_meta["class_name"]
-        
+
+        module_path = meta["module_path"]
+        class_name = meta["class_name"]
+
         if self._mounted_snapshot and not _from:
-            # Full isolation: use code from mounted snapshot
-            ModelClass = self._import_from_mounted(module_path, class_name)
+            ModelClass = self._import_from_snapshot(module_path, class_name)
         else:
-            # Current code: use workdir code
             ModelClass = self._import_from_workdir(module_path, class_name)
-            
-            # Check code compatibility
-            current_code_hash = self._get_code_hash(ModelClass)
-            if model_code_hash and current_code_hash != model_code_hash:
+            saved_hash = meta.get("code_hash")
+            current_hash = self._get_code_hash(ModelClass)
+            if saved_hash and current_hash != saved_hash:
                 logger.warning(
-                    f"Code for '{model_name}' has changed!\n"
-                    f"  Old hash: {model_code_hash}\n"
-                    f"  New hash: {current_code_hash}\n"
-                    f"  This may cause weight loading failures."
+                    "Code for '%s' has changed (old=%s… new=%s…). "
+                    "Weight loading may fail.",
+                    model_name,
+                    saved_hash[:8],
+                    current_hash[:8],
                 )
-        
-        # Instantiate and load weights
+
         model = ModelClass()
         try:
             model.load_state_dict(state_dict)
-        except RuntimeError as e:
+        except RuntimeError as exc:
             raise RuntimeError(
                 f"Failed to load '{model_name}' weights "
-                f"(code/weights mismatch):\n{e}"
-            )
-        
+                f"(code/weights mismatch): {exc}"
+            ) from exc
+
         return model
 
-    # ===== Private Helper Methods =====
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
 
-    def _clear_project_modules(self) -> None:
-        """Clears modules loaded from previously mounted snapshot.
-        
-        Only removes modules that were loaded from the old snapshot path,
-        preserving modules from other sources.
-        """
-        import sys
-
+    def _clear_mounted_modules(self) -> None:
         if not self._mounted_sys_path:
             return
-
         path = self._mounted_sys_path
-
         for name, mod in list(sys.modules.items()):
-            try:
-                mod_file = getattr(mod, "__file__", "")
-                if mod_file and mod_file.startswith(path):
+            mod_file = getattr(mod, "__file__", "") or ""
+            if mod_file.startswith(path):
+                try:
                     del sys.modules[name]
-            except Exception:
-                # Module might not be deletable, skip it
-                pass
+                except Exception:
+                    pass
 
-    def _check_if_still_dirty_after_removal(self) -> bool:
-        """Checks if session is still dirty after component removal.
-        
-        Returns:
-            True if session has unsaved changes, False otherwise.
-        """
-        if not self.components:
-            return False
-        return self._is_dirty
+    def _resolve_snapshot_path(self, tag: str) -> Path:
+        """Resolves a snapshot tag to a filesystem path.
 
-    def _resolve_snapshot_path(self, snapshot_tag: str) -> Path:
-        """Resolves a snapshot tag to an absolute path.
-        
         Args:
-            snapshot_tag: Tag to resolve. Supports:
-                - "\\latest": Most recent snapshot
-                - "\\head~N": N commits before latest
-                - Direct snapshot folder name
-            
+            tag: Snapshot identifier (``"\\\\latest"``, ``"\\\\head~N"``, or
+                a literal folder name).
+
         Returns:
             Absolute path to the snapshot directory.
-            
+
         Raises:
             NoSessionFocusError: If no project is focused.
-            ValueError: If the tag format is invalid or snapshot not found.
+            ValueError: If the tag is malformed or the snapshot is not found.
         """
         if self._project is None:
             raise NoSessionFocusError(
                 "No project in focus. Call useml.focus() first."
             )
-        
+
         snapshots = self._project.log()
-        
-        if snapshot_tag == "\\latest":
+
+        if tag == "\\latest":
             if not snapshots:
-                raise ValueError("No snapshots found in project")
+                raise ValueError("No snapshots found in project.")
             return snapshots[0].path
-        
-        if snapshot_tag.startswith("\\head~"):
+
+        if tag.startswith("\\head~"):
             try:
-                offset = int(snapshot_tag[6:])
+                offset = int(tag[6:])
             except ValueError:
                 raise ValueError(
-                    f"Invalid snapshot tag format: {snapshot_tag}. "
-                    f"Use \\head~N where N is an integer."
+                    f"Invalid tag '{tag}'. Expected '\\\\head~N' where N is an integer."
                 )
-            
             if offset < 0:
                 raise ValueError(f"Offset must be non-negative: {offset}")
-            
             if offset >= len(snapshots):
                 raise ValueError(
-                    f"Offset {offset} exceeds available snapshots "
-                    f"({len(snapshots)} total)"
+                    f"Offset {offset} out of range ({len(snapshots)} snapshots)."
                 )
-            
             return snapshots[offset].path
-        
-        # Direct snapshot folder name (snapshots live directly under project.path)
-        snapshot_path = self._project.path / snapshot_tag
-        if not snapshot_path.exists():
-            raise ValueError(f"Snapshot not found: {snapshot_tag}")
 
-        return snapshot_path
+        snap_path = self._project.path / tag
+        if not snap_path.exists():
+            raise ValueError(f"Snapshot not found: '{tag}'")
+        return snap_path
 
-    def _import_from_mounted(
-        self, 
-        module_path: str, 
-        class_name: str
+    def _import_from_snapshot(
+        self, module_path: str, class_name: str
     ) -> type:
-        """Imports a class from currently mounted snapshot code.
-        
+        """Imports a class from the currently mounted snapshot.
+
         Args:
-            module_path: Module path (e.g., "models.mymodel").
-            class_name: Class name (e.g., "MyModel").
-            
+            module_path: Dotted module path (e.g. ``"models.net"``).
+            class_name: Name of the class to import.
+
         Returns:
             The imported class object.
-            
+
         Raises:
-            ImportError: If the class cannot be imported from mounted snapshot.
+            ImportError: If the class cannot be found in the snapshot.
         """
-        import sys
-
-        # Remove conflicting global modules to force reload from snapshot
-        to_delete = [
-            k for k in list(sys.modules.keys())
-            if k == module_path or k.startswith(module_path + ".")
-        ]
-        for k in to_delete:
-            del sys.modules[k]
-
+        for key in list(sys.modules):
+            if key == module_path or key.startswith(module_path + "."):
+                del sys.modules[key]
         try:
-            # Import via useml.workdir hook
-            module = importlib.import_module(
-                f"useml.workdir.{module_path}"
-            )
+            module = importlib.import_module(f"useml.workdir.{module_path}")
             return getattr(module, class_name)
-        except (ImportError, AttributeError) as e:
+        except (ImportError, AttributeError) as exc:
             raise ImportError(
-                f"Failed to import {class_name} from {module_path} "
-                f"in mounted snapshot: {e}"
-            )
+                f"Cannot import {class_name} from '{module_path}' "
+                f"in mounted snapshot: {exc}"
+            ) from exc
 
     def _import_from_workdir(
-        self, 
-        module_path: str, 
-        class_name: str
+        self, module_path: str, class_name: str
     ) -> type:
-        """Imports a class from current working directory code.
-        
+        """Imports a class from the current working directory.
+
         Args:
-            module_path: Module path (e.g., "models.mymodel" or "__main__").
-            class_name: Class name (e.g., "MyModel").
-            
+            module_path: Dotted module path, or ``"__main__"``.
+            class_name: Name of the class to import.
+
         Returns:
             The imported class object.
-            
+
         Raises:
-            ImportError: If the class cannot be imported from workdir.
+            ImportError: If the class cannot be found.
         """
         try:
             if module_path == "__main__":
-                import __main__
-                module = __main__
+                import __main__ as module
             else:
                 module = importlib.import_module(module_path)
-            
             return getattr(module, class_name)
-        except (ImportError, AttributeError) as e:
+        except (ImportError, AttributeError) as exc:
             raise ImportError(
-                f"Failed to import {class_name} from {module_path} "
-                f"in workdir: {e}"
-            )
+                f"Cannot import {class_name} from '{module_path}': {exc}"
+            ) from exc
 
     def _get_code_hash(self, cls: type) -> str:
-        """Computes the MD5 hash of a class's source code.
-        
-        Args:
-            cls: The class to hash.
-            
-        Returns:
-            Hexadecimal MD5 hash string, or "unknown" if source unavailable.
-        """
         try:
             source = inspect.getsource(cls)
             return hashlib.md5(source.encode()).hexdigest()
         except OSError:
-            # Source unavailable (built-in class, compiled, etc.)
             return "unknown"
 
 
