@@ -4,7 +4,7 @@ import importlib.metadata
 import inspect
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .snapshot import Snapshot
 from ..session.component import Component
@@ -48,6 +48,8 @@ class Project:
         self,
         message: str,
         components: Dict[str, Component],
+        bundle_meta: Optional[dict] = None,
+        bundle_inline_source: Optional[dict] = None,
         **metrics,
     ) -> Snapshot:
         """Creates a reproducible snapshot of tracked components.
@@ -104,6 +106,11 @@ class Project:
         }
         if metrics:
             meta["metrics"] = metrics
+        if bundle_meta:
+            meta["data"] = bundle_meta
+
+        if bundle_inline_source:
+            inline_sources = {**inline_sources, **bundle_inline_source}
 
         snapshot = Snapshot(snap_path)
         snapshot.save(

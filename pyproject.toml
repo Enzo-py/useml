@@ -12,16 +12,18 @@ dev = [
 
 [project]
 name = "useml"
-version = "0.0.2"
-description = "Simplifying PyTorch workflows: Pipeline, Versioning, and Vault."
+version = "0.1.0"
+description = "Minimalist ML experiment versioning for PyTorch — checkpointing, source archiving, and model isolation."
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [{name = "Enzo-py", email = "85191552+Enzo-py@users.noreply.github.com"}]
 dependencies = [
     "torch>=2.0.0",
-    "tqdm>=4.65.0",
-    "numpy>=1.24.0",
+    "pyyaml>=6.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["useml*"]
 
 [project.urls]
 "Homepage" = "https://github.com/Enzo-py/useml"

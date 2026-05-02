@@ -46,7 +46,7 @@ def _require_torchvision():
 
 
 def load_dataset(dataset, config):
-    """Return (train_loader, val_loader) from a name string or torch Dataset.
+    """Return (train_loader, val_loader) from a name string, torch Dataset, or DataBundle.
 
     Supported strings
     -----------------
@@ -56,7 +56,16 @@ def load_dataset(dataset, config):
     Custom dataset
     --------------
     Pass any torch.utils.data.Dataset — it will be split automatically.
+
+    DataBundle
+    ----------
+    Pass a ``useml.DataBundle`` for versioned, hash-tracked data with optional
+    per-sample preprocessing transform.
     """
+    from .bundle import DataBundle
+    if isinstance(dataset, DataBundle):
+        return dataset.loaders(config)
+
     if isinstance(dataset, str):
         name = dataset.lower()
         if name in _BUILTIN:
@@ -114,7 +123,6 @@ def _load_huggingface(hf_name: str, config):
 
     raw = hf_load(hf_name)
 
-    # Minimal wrapper: assumes 'image'/'pixel_values' + 'label' columns
     class HFWrapper(torch.utils.data.Dataset):
         def __init__(self, hf_split):
             self._data = hf_split

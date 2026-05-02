@@ -8,9 +8,11 @@ from .vault.snapshot import Snapshot
 from .errors import (
     ProjectAlreadyExistsError,
     NothingMountedError,
+    ModelInstantiationError,
     UseMlError,
 )
 from .template import Config, Loss, Model, Trainer, run_training
+from .dataset import DataBundle
 
 from . import workdir
 
@@ -141,6 +143,7 @@ def train(
     model_cls,
     dataset,
     config=None,
+    step_fn=None,
 ) -> dict:
     """Level-0 entry point: train a model in two lines.
 
@@ -148,35 +151,33 @@ def train(
     useml.init() + useml.new()/focus() before training to enable
     checkpointing; omitting them trains without saving.
 
-    Parameters
-    ----------
-    model_cls : class
-        Subclass of useml.Model (or any nn.Module).
-    dataset : str or torch.utils.data.Dataset
-        "mnist", "fashion_mnist", "cifar10", "cifar100",
-        "hf:<hf_name>", or a torch.utils.data.Dataset.
-    config : Config, optional
-        Training configuration. Defaults to Config().
+    Args:
+        model_cls: Model class (subclass of :class:`Model` or any ``nn.Module``).
+        dataset: Built-in name (``"mnist"``, ``"cifar10"``, …),
+            ``"hf:<name>"``, or a ``torch.utils.data.Dataset``.
+        config: Training configuration. Defaults to :class:`Config`.
+        step_fn: Optional callable ``(model, batch, device) -> loss_tensor``
+            that replaces the default ``criterion(model(x), y)`` step.
+            Use for autoencoders, self-supervised losses, or any paradigm
+            where the target is not the second element of the batch.
 
-    Returns
-    -------
-    dict
-        {"train_loss": [...], "val_loss": [...]}
+    Returns:
+        History dict: ``{"train_loss": [...], "val_loss": [...]}``.
 
-    Example
-    -------
-    >>> import useml
-    >>> useml.init("vault")
-    >>> useml.new("my-experiment")
-    >>> class Net(useml.Model):
-    ...     def __init__(self):
-    ...         super().__init__()
-    ...         self.fc = nn.Linear(784, 10)
-    ...     def forward(self, x):
-    ...         return self.fc(x.view(x.size(0), -1))
-    >>> useml.train(Net, "mnist")
+    Example::
+
+        # Standard use
+        useml.train(Net, "mnist", config=config)
+
+        # Autoencoder — target is the input, not the label
+        def ae_step(model, batch, device):
+            x, _ = batch
+            x = x.to(device)
+            return F.mse_loss(model(x), x)
+
+        useml.train(AutoEncoder, "mnist", config=config, step_fn=ae_step)
     """
-    return run_training(model_cls, dataset, config=config)
+    return run_training(model_cls, dataset, config=config, step_fn=step_fn)
 
 
 def debug_imports() -> None:
@@ -204,10 +205,13 @@ __all__ = [
     "mount",
     "debug_imports",
     "NothingMountedError",
+    "ModelInstantiationError",
     # Level-0 template
     "train",
     "Loss",
     "Model",
     "Config",
     "Trainer",
+    # Level-1 data
+    "DataBundle",
 ]

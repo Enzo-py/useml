@@ -101,6 +101,14 @@ _CATALOG: dict[str, _ErrorDef] = {
         cause="The snapshot was saved before source archiving was introduced, or source saving failed.",
         fix="Re-commit the model with the current version of useml to capture sources.",
     ),
+    "UML-307": _ErrorDef(
+        code="UML-307",
+        message="Cannot instantiate model class — constructor requires arguments not found in snapshot config.",
+        cause="The model __init__ has required positional arguments that are missing from the snapshot config YAML. "
+              "This happens when architecture params (latent_dim, n_r_bins, …) were not stored in Config.",
+        fix="Add the missing params as custom Config fields before committing: "
+            "Config(..., latent_dim=16). useml.load() will then forward them to the constructor automatically.",
+    ),
     # Import / workdir
     "UML-401": _ErrorDef(
         code="UML-401",
@@ -256,6 +264,11 @@ class WeightsNotFoundError(UseMlError, FileNotFoundError):
 class WeightsLoadError(UseMlError, RuntimeError):
     """Raised when state_dict loading fails due to architecture mismatch."""
     code = "UML-305"
+
+
+class ModelInstantiationError(UseMlError, TypeError):
+    """Raised when load() cannot construct the model class from the snapshot config."""
+    code = "UML-307"
 
 
 class NoSourceDirectoryError(UseMlError, FileNotFoundError):

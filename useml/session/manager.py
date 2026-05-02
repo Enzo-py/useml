@@ -16,6 +16,7 @@ from ..errors import (
     InvalidSnapshotTagError,
     WeightsNotFoundError,
     WeightsLoadError,
+    ModelInstantiationError,
     NoSourceDirectoryError,
     SnapshotModuleNotFoundError,
     WorkdirImportError,
@@ -166,18 +167,33 @@ class Session:
         )
         self._is_dirty = True
 
-    def commit(self, message: str, **metrics: Any) -> Snapshot:
+    def commit(
+        self,
+        message: str,
+        bundle_meta: Optional[dict] = None,
+        bundle_inline_source: Optional[dict] = None,
+        **metrics: Any,
+    ) -> Snapshot:
         """Saves a snapshot of all tracked components to the focused project.
 
         Args:
             message: Description of the changes or experiment state.
+            bundle_meta: DataBundle metadata dict (embedded under ``data:`` in
+                ``metadata.yaml``). Populated automatically by ``useml.train()``.
+            bundle_inline_source: Mapping of ``{relative_path: source_code}`` to
+                write into the snapshot's ``source/`` directory. Used to archive
+                the DataBundle's transform function.
             **metrics: Quantitative results (e.g. ``loss=0.1``).
 
         Returns:
             The created Snapshot instance.
         """
         snap = self.project.commit(
-            message=message, components=self.components, **metrics
+            message=message,
+            components=self.components,
+            bundle_meta=bundle_meta,
+            bundle_inline_source=bundle_inline_source,
+            **metrics,
         )
         self._is_dirty = False
         return snap
@@ -296,7 +312,8 @@ class Session:
                     current_hash[:8],
                 )
 
-        model = ModelClass()
+        config_dict = self._load_component_config(snapshot_path, meta.get("config"))
+        model = self._instantiate_model(ModelClass, config_dict)
         try:
             model.load_state_dict(state_dict)
         except RuntimeError as exc:
@@ -306,6 +323,40 @@ class Session:
             ) from exc
 
         return model
+
+    @staticmethod
+    def _load_component_config(snapshot_path: Path, config_rel: Optional[str]) -> dict:
+        """Load the component YAML config from the snapshot, or return {}."""
+        if not config_rel:
+            return {}
+        config_file = snapshot_path / config_rel
+        if not config_file.exists():
+            return {}
+        import yaml
+        with open(config_file, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+
+    @staticmethod
+    def _instantiate_model(model_cls: type, config_dict: dict):
+        """Instantiate model_cls, forwarding matching config keys as kwargs."""
+        sig = inspect.signature(model_cls.__init__)
+        params = set(list(sig.parameters.keys())[1:])  # skip self
+        kwargs = {k: v for k, v in config_dict.items() if k in params}
+        try:
+            return model_cls(**kwargs) if kwargs else model_cls()
+        except TypeError as exc:
+            missing = [
+                p for p, v in sig.parameters.items()
+                if p != "self" and v.default is inspect.Parameter.empty
+                and p not in kwargs
+            ]
+            raise ModelInstantiationError(
+                f"Cannot instantiate '{model_cls.__name__}': {exc}. "
+                f"Missing required constructor arg(s): {missing}. "
+                f"Add them as Config custom fields before committing "
+                f"(e.g. Config(..., {missing[0]}=<value>)) so load() can "
+                f"forward them automatically."
+            ) from exc
 
     # ------------------------------------------------------------------
     # Private helpers

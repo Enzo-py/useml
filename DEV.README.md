@@ -16,7 +16,7 @@ pytest -x -q        # stop on first failure, minimal output
 pytest tests/test_session.py   # single file
 ```
 
-All 27 tests must pass before merging.
+All tests must pass before merging.
 
 ## Project structure
 

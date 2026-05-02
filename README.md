@@ -88,7 +88,7 @@ useml.show()
 # Latest:  baseline [snap_20240501_...]
 ```
 
-## Level-0 API — train in two lines
+## Level-0 — train in two lines
 
 ```python
 import useml
@@ -109,6 +109,101 @@ history = useml.train(Net, "mnist", config=Config(epochs=10))
 # Built-in datasets: "mnist", "fashion_mnist", "cifar10", "cifar100"
 # HuggingFace:       "hf:<dataset_name>"
 # Custom:            any torch.utils.data.Dataset
+```
+
+### Custom step function
+
+Override the default `criterion(model(x), y)` without subclassing:
+
+```python
+def ae_step(model, batch, device):
+    x, _ = batch
+    x = x.to(device)
+    return F.mse_loss(model(x), x)   # target = input
+
+useml.train(AutoEncoder, "mnist", config=config, step_fn=ae_step)
+```
+
+### Config custom fields
+
+`Config` accepts any extra keyword argument as a custom field. Custom fields
+are serialised to the snapshot YAML and forwarded to the model constructor
+by `useml.load()`.
+
+```python
+config = Config(epochs=10, lr=1e-3, latent_dim=16, kl_weight=1e-3)
+config.latent_dim   # 16
+config.to_dict()    # includes latent_dim and kl_weight in snapshot YAML
+
+# On load, useml calls VAE(latent_dim=16) automatically
+model = useml.load("vae")
+```
+
+## Level-1 — DataBundle (versioned data contracts)
+
+`DataBundle` pairs a raw dataset with a preprocessing transform and hashes
+both at every snapshot. The raw data is stored once; only the transform code
+and three hashes are embedded in the snapshot.
+
+```python
+from useml import DataBundle
+
+bundle = DataBundle(
+    name="polar_clouds",
+    source=CartesianDataset(),      # raw data — any torch Dataset or built-in name
+    transform=gridify,              # per-sample callable: (sample) -> sample
+    version="v1",                   # optional label
+)
+
+history = useml.train(MyCNN, bundle, config=config)
+```
+
+Three hashes are recorded in `metadata.yaml` for every snapshot that uses the bundle:
+
+| Hash | What it tracks |
+|---|---|
+| `source_hash` | Fingerprint of the raw dataset |
+| `transform_hash` | sha256 of the transform function's source code + name |
+| `cache_key` | sha256(source_hash + transform_hash) — used for disk cache |
+
+The transform source code is also archived verbatim in `source/_bundle_<name>_<fn>.py`
+inside the snapshot, so the exact preprocessing of any checkpoint is always recoverable.
+
+### Factory transforms
+
+When a transform is produced by a factory (different params, same algorithm),
+set a descriptive `__name__` so the hashes and archived file names are distinct:
+
+```python
+def make_gridify(n_r_bins, n_theta_bins):
+    def gridify(sample):
+        ...
+    gridify.__name__ = f"gridify_{n_r_bins}r_{n_theta_bins}t"
+    return gridify
+
+bundle_fine   = DataBundle("ds", raw_ds, transform=make_gridify(16, 32))
+bundle_coarse = DataBundle("ds", raw_ds, transform=make_gridify(8, 16))
+# → different transform_hash, different archived .py file
+```
+
+### Optional disk cache
+
+For expensive transforms, set `cache=True` to materialise the processed dataset
+on first run and reload it on subsequent runs:
+
+```python
+bundle = DataBundle("ds", raw_ds, transform=heavy_preprocess, cache=True)
+# Saved to: <data_dir>/.bundle_cache/<cache_key>.pt
+```
+
+### Manual commit with bundle metadata
+
+When calling `useml.train()`, bundle metadata flows into the snapshot automatically.
+For manual workflows, pass it explicitly:
+
+```python
+useml.track("model", model, config=config)
+useml.commit("run 1", bundle_meta=bundle.to_meta_dict())
 ```
 
 ## Loading models
@@ -190,5 +285,16 @@ All exceptions raised by useml carry a `[UML-NNN]` code. See [ERRORS.md](ERRORS.
 | `useml.show()` | Print session dashboard |
 | `useml.stash()` | Park current project state in RAM |
 | `useml.projects()` | List all projects in the vault |
-| `useml.train(model_cls, dataset, config?)` | Level-0 training entry point |
+| `useml.train(model_cls, dataset, config?, step_fn?)` | Level-0 training entry point |
 | `useml.debug_imports()` | Inspect workdir importable modules |
+
+**Level-1**
+
+| Class | Description |
+|---|---|
+| `useml.DataBundle(name, source, transform?, version?, cache?)` | Versioned data contract with hash tracking |
+| `bundle.source_hash()` | Fingerprint of the raw dataset |
+| `bundle.transform_hash()` | sha256 of the transform source + name |
+| `bundle.cache_key()` | Combined hash used for disk cache |
+| `bundle.to_meta_dict()` | Dict embedded in snapshot `metadata.yaml` under `data:` |
+| `bundle.transform_source()` | Source code of the transform (for archival) |

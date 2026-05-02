@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 
 import useml
 from useml.template.config import Config
-from useml.template.dataset import load_dataset
+from useml.dataset import load_dataset
 from useml.template.trainer import Trainer, run_training
 
 
