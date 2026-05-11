@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 
 import useml
-from useml import Config
+from useml import Config, ModelInstantiationError
 from useml.session.manager import _session
 from useml.dataset import load_dataset
 from useml.template.trainer import Trainer
@@ -58,6 +58,15 @@ class TinyReg(nn.Module):
         super().__init__()
         self.fc = nn.Linear(4, 1)
     def forward(self, x): return self.fc(x).squeeze(-1)
+
+
+class _ModelNeedsEncoder(nn.Module):
+    """Used by TestRunLoadModes — requires an object arg not storable in Config."""
+    def __init__(self, encoder):
+        super().__init__()
+        self.enc = encoder
+        self.fc = nn.Linear(4, 2)
+    def forward(self, x): return self.fc(x)
 
 
 class TinyAE(nn.Module):
@@ -887,3 +896,265 @@ class TestSideTrackANewAPI:
         run2 = proj.runs.new(TinyClf, config=cfg)
         run2.resume("\\latest")
         assert run2._epoch >= 1   # picked up at least one epoch
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# History & plot
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _train_with_history(proj, epochs=3):
+    """Helper: train a small run and return its RunRecord."""
+    ds = _clf_ds()
+    loader = DataLoader(ds, batch_size=32)
+    cfg = _cfg(epochs=epochs, checkpoint_strategy="last")
+    run = proj.runs.new(TinyClf, config=cfg)
+    run.train(loader, loader)
+    return proj.runs.latest
+
+
+class TestRunHistory:
+    """history.yaml written at checkpoint; RunRecord.history / history_df / plot."""
+
+    def test_history_written_after_train(self):
+        proj = useml.focus("test")
+        record = _train_with_history(proj, epochs=3)
+        h_path = record._snapshot.path / "history.yaml"
+        assert h_path.exists(), "history.yaml must be created alongside weights"
+
+    def test_history_keys_present(self):
+        proj = useml.focus("test")
+        record = _train_with_history(proj, epochs=3)
+        h = record.history
+        assert "train_loss" in h
+        assert "val_loss" in h
+
+    def test_history_length_matches_epochs(self):
+        proj = useml.focus("test")
+        record = _train_with_history(proj, epochs=4)
+        h = record.history
+        assert len(h["train_loss"]) == 4
+        assert len(h["val_loss"]) == 4
+
+    def test_history_values_are_floats(self):
+        proj = useml.focus("test")
+        record = _train_with_history(proj, epochs=2)
+        h = record.history
+        assert all(isinstance(v, float) for v in h["train_loss"])
+
+    def test_history_missing_returns_empty_dict(self):
+        """Snapshots created without history.yaml return {}."""
+        proj = useml.focus("test")
+        record = _train_with_history(proj, epochs=2)
+        (record._snapshot.path / "history.yaml").unlink()
+        assert record.history == {}
+
+    def test_history_df_shape(self):
+        pytest.importorskip("pandas")
+        proj = useml.focus("test")
+        record = _train_with_history(proj, epochs=3)
+        df = record.history_df()
+        assert df.shape[0] == 3          # 3 epochs
+        assert "train_loss" in df.columns
+        assert df.index[0] == 1          # 1-based
+
+    def test_history_df_no_pandas_raises(self, monkeypatch):
+        import builtins
+        real_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "pandas":
+                raise ImportError("mocked")
+            return real_import(name, *args, **kwargs)
+
+        proj = useml.focus("test")
+        record = _train_with_history(proj, epochs=2)
+        monkeypatch.setattr(builtins, "__import__", mock_import)
+        with pytest.raises(ImportError, match="pandas"):
+            record.history_df()
+
+    def test_plot_returns_fig_ax(self):
+        pytest.importorskip("matplotlib")
+        import matplotlib
+        matplotlib.use("Agg")
+        proj = useml.focus("test")
+        record = _train_with_history(proj, epochs=3)
+        fig, ax = record.plot()
+        assert fig is not None
+        assert ax is not None
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+    def test_plot_specific_metric(self):
+        pytest.importorskip("matplotlib")
+        import matplotlib
+        matplotlib.use("Agg")
+        proj = useml.focus("test")
+        record = _train_with_history(proj, epochs=3)
+        fig, ax = record.plot("val_loss")
+        lines = ax.get_lines()
+        assert len(lines) == 1
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+    def test_plot_no_history_raises(self):
+        pytest.importorskip("matplotlib")
+        import matplotlib
+        matplotlib.use("Agg")
+        proj = useml.focus("test")
+        record = _train_with_history(proj, epochs=2)
+        (record._snapshot.path / "history.yaml").unlink()
+        with pytest.raises(ValueError, match="No history"):
+            record.plot()
+
+    def test_plot_unknown_metric_raises(self):
+        pytest.importorskip("matplotlib")
+        import matplotlib
+        matplotlib.use("Agg")
+        proj = useml.focus("test")
+        record = _train_with_history(proj, epochs=2)
+        with pytest.raises(ValueError, match="No matching metrics"):
+            record.plot("nonexistent_metric")
+
+    def test_runs_view_plot(self):
+        pytest.importorskip("matplotlib")
+        import matplotlib
+        matplotlib.use("Agg")
+        proj = useml.focus("test")
+        _train_with_history(proj, epochs=2)
+        _train_with_history(proj, epochs=2)
+        fig, ax = proj.runs.plot("val_loss")
+        assert len(ax.get_lines()) == 2
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+    def test_runs_view_plot_top(self):
+        pytest.importorskip("matplotlib")
+        import matplotlib
+        matplotlib.use("Agg")
+        proj = useml.focus("test")
+        for _ in range(4):
+            _train_with_history(proj, epochs=2)
+        fig, ax = proj.runs.plot("val_loss", top=2)
+        assert len(ax.get_lines()) == 2
+        import matplotlib.pyplot as plt
+        plt.close("all")
+
+class TestRunLoadModes:
+    """state_dict / instantiate / load — three ways to restore a model."""
+
+    def _make_run(self, proj):
+        ds = _clf_ds()
+        loader = DataLoader(ds, batch_size=32)
+        cfg = _cfg(epochs=2, checkpoint_strategy="last")
+        run = proj.runs.new(TinyClf, config=cfg)
+        run.train(loader, loader)
+        return proj.runs.latest
+
+    def test_state_dict_returns_ordereddict(self):
+        proj = useml.focus("test")
+        record = self._make_run(proj)
+        sd = record.state_dict()
+        assert isinstance(sd, dict)
+        assert any("fc" in k for k in sd)
+
+    def test_state_dict_explicit_name(self):
+        proj = useml.focus("test")
+        record = self._make_run(proj)
+        sd = record.state_dict("tinyclf")
+        assert isinstance(sd, dict)
+
+    def test_state_dict_wrong_name_raises(self):
+        proj = useml.focus("test")
+        record = self._make_run(proj)
+        with pytest.raises(KeyError):
+            record.state_dict("nonexistent")
+
+    def test_instantiate_returns_correct_type(self):
+        proj = useml.focus("test")
+        record = self._make_run(proj)
+        model = record.instantiate()
+        assert isinstance(model, TinyClf)
+
+    def test_instantiate_has_no_trained_weights(self):
+        """instantiate() gives a fresh (random) model, not the trained one."""
+        proj = useml.focus("test")
+        record = self._make_run(proj)
+        fresh = record.instantiate()
+        trained = record.load()
+        fresh_params = list(fresh.parameters())
+        trained_params = list(trained.parameters())
+        # They should not all be equal (weights differ)
+        any_different = any(
+            not torch.equal(f, t) for f, t in zip(fresh_params, trained_params)
+        )
+        assert any_different
+
+    def test_instantiate_model_with_missing_required_arg_raises(self):
+        """Model with required object arg not in config → clear error message."""
+        proj = useml.focus("test")
+        ds = _clf_ds()
+        loader = DataLoader(ds, batch_size=32)
+        cfg = _cfg(epochs=1, checkpoint_strategy="last")
+        model = _ModelNeedsEncoder(encoder=nn.Linear(4, 4))
+        run = proj.runs.new(model, config=cfg)
+        run.train(loader, loader)
+        record = proj.runs.latest
+
+        with pytest.raises(ModelInstantiationError, match="encoder"):
+            record.instantiate("_modelneedsencoder")
+
+    def test_load_with_provided_instance(self):
+        proj = useml.focus("test")
+        record = self._make_run(proj)
+        model = record.load(model=TinyClf())
+        assert isinstance(model, TinyClf)
+
+    def test_load_weights_via_state_dict_then_manual(self):
+        proj = useml.focus("test")
+        record = self._make_run(proj)
+        sd = record.state_dict()
+        model = TinyClf()
+        model.load_state_dict(sd)
+        # Loaded weights should match record.load()
+        direct = record.load(model=TinyClf())
+        for p1, p2 in zip(model.parameters(), direct.parameters()):
+            assert torch.equal(p1, p2)
+
+    def test_error_message_suggests_all_three_alternatives(self):
+        """Error from missing required arg mentions state_dict, load(model=), and Config."""
+        proj = useml.focus("test")
+        ds = _clf_ds()
+        loader = DataLoader(ds, batch_size=32)
+        cfg = _cfg(epochs=1, checkpoint_strategy="last")
+        run = proj.runs.new(_ModelNeedsEncoder(nn.Linear(4, 4)), config=cfg)
+        run.train(loader, loader)
+        record = proj.runs.latest
+
+        with pytest.raises(ModelInstantiationError) as exc_info:
+            record.load("_modelneedsencoder")
+        msg = str(exc_info.value)
+        assert "encoder" in msg
+        assert "state_dict" in msg
+        assert "record.load" in msg
+
+    def test_pattern_b_history_written(self):
+        """Pattern B with epoch_end also writes history."""
+        proj = useml.focus("test")
+        ds = _clf_ds()
+        loader = DataLoader(ds, batch_size=32)
+        cfg = _cfg(epochs=3, checkpoint_strategy="last")
+        run = proj.runs.new(config=cfg)
+        run.register("tinyclf", TinyClf())
+        for epoch in run.epochs(cfg.epochs):
+            for batch in loader:
+                x, y = batch
+                loss = F.cross_entropy(run._models["tinyclf"](x), y)
+                run._optimizers["tinyclf"].zero_grad()
+                loss.backward()
+                run._optimizers["tinyclf"].step()
+                run.update(n=len(y), loss=loss.item())
+            run.update_val(n=1, loss=0.5)
+            run.epoch_end(epoch)
+        h = proj.runs.latest.history
+        assert "train_loss" in h
+        assert len(h["train_loss"]) == 3

@@ -64,36 +64,210 @@ class RunRecord:
         """Names of the model components saved in this run."""
         return list(self._snapshot.components.keys())
 
-    # ── Actions ────────────────────────────────────────────────────────────
+    @property
+    def history(self) -> dict:
+        """Per-epoch metric history: ``{"train_loss": [...], "val_loss": [...]}``.
 
-    def load(self, name: Optional[str] = None, model: Optional[nn.Module] = None):
-        """Load a model saved in this run.
+        Returns an empty dict if no history was recorded (old snapshots).
+        """
+        h_path = self._snapshot.path / "history.yaml"
+        if not h_path.exists():
+            return {}
+        import yaml
+        with open(h_path, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
 
-        Args:
-            name: Component name. If ``None`` and only one model exists in
-                this run, that one is loaded.
-            model: Pre-instantiated model. If ``None``, useml tries to import
-                the class from its archived ``module_path``.
+    def history_df(self):
+        """Return :attr:`history` as a pandas ``DataFrame`` (requires pandas).
+
+        Each column is a metric; the index is 1-based epoch numbers.
 
         Raises:
-            ModelInstantiationError: If ``model`` is ``None`` and the class
-                cannot be auto-instantiated.
+            ImportError: If pandas is not installed.
         """
+        try:
+            import pandas as pd
+        except ImportError:
+            raise ImportError(
+                "pandas is required for history_df(). Run: pip install pandas"
+            )
+        h = self.history
+        if not h:
+            return pd.DataFrame()
+        df = pd.DataFrame(h)
+        df.index = range(1, len(df) + 1)
+        df.index.name = "epoch"
+        return df
+
+    def plot(self, metrics=None, *, ax=None, label_prefix: str = "", title: str = None):
+        """Plot training curves for this run.
+
+        Train and val variants of the same base metric share a color;
+        train uses a solid line and val uses a dashed line.
+
+        Args:
+            metrics: Metric name(s) to plot. ``None`` plots all available.
+            ax: Existing :class:`matplotlib.axes.Axes` to draw on.
+                When ``None`` (default), a new figure is created.
+            label_prefix: String prepended to each legend label (useful when
+                combining several runs on the same axes).
+            title: Figure title. Defaults to the run id.
+
+        Returns:
+            ``(fig, ax)`` where *fig* is ``None`` when *ax* was supplied.
+
+        Raises:
+            ImportError: If matplotlib is not installed.
+            ValueError: If no matching metrics are found.
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError(
+                "matplotlib is required for plot(). Run: pip install matplotlib"
+            )
+
+        h = self.history
+        if not h:
+            raise ValueError(f"No history data found for run '{self.id}'.")
+
+        if metrics is None:
+            keys = list(h.keys())
+        elif isinstance(metrics, str):
+            keys = [m for m in [metrics] if m in h]
+        else:
+            keys = [m for m in metrics if m in h]
+
+        if not keys:
+            raise ValueError(
+                f"No matching metrics in history. Available: {list(h.keys())}"
+            )
+
+        created_fig = ax is None
+        if created_fig:
+            fig, ax = plt.subplots(figsize=(9, 4))
+        else:
+            fig = None
+
+        color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+        base_to_color: dict = {}
+        color_idx = 0
+
+        for k in keys:
+            if k.startswith("train_"):
+                base = k[6:]
+            elif k.startswith("val_"):
+                base = k[4:]
+            else:
+                base = k
+            if base not in base_to_color:
+                base_to_color[base] = color_cycle[color_idx % len(color_cycle)]
+                color_idx += 1
+
+            vals = h[k]
+            epochs = list(range(1, len(vals) + 1))
+            linestyle = "--" if k.startswith("val_") else "-"
+            label = f"{label_prefix}{k}" if label_prefix else k
+            ax.plot(epochs, vals, linestyle=linestyle,
+                    color=base_to_color[base], label=label)
+
+        ax.set_xlabel("Epoch")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+
+        if created_fig:
+            ax.set_title(title or self.id[:30])
+            fig.tight_layout()
+
+        return fig, ax
+
+    # ── Actions ────────────────────────────────────────────────────────────
+
+    def _resolve_name(self, name: Optional[str]) -> str:
+        """Resolve component name, defaulting to the only one when there is one."""
         names = self.models
         if name is None:
-            if len(names) == 0:
+            if not names:
                 raise KeyError(f"No models saved in run '{self.id}'.")
             if len(names) > 1:
                 raise ValueError(
                     f"Run '{self.id}' has multiple models ({names}); "
-                    f"specify which one with .load(name=…)."
+                    f"specify which one."
                 )
-            name = names[0]
+            return names[0]
         if name not in names:
             raise KeyError(
                 f"Model '{name}' not in run '{self.id}'. Available: {names}"
             )
+        return name
 
+    def state_dict(self, name: Optional[str] = None) -> dict:
+        """Return the raw weights dict for a component — no model needed.
+
+        Useful when the model requires complex constructor arguments that
+        cannot be auto-inferred from the snapshot config.
+
+        Args:
+            name: Component name. Omit when the run has only one model.
+
+        Returns:
+            ``OrderedDict`` as returned by ``torch.load``.
+        """
+        name = self._resolve_name(name)
+        weights_path = self._snapshot.path / "weights" / f"{name}.pth"
+        if not weights_path.exists():
+            raise FileNotFoundError(f"Weights file missing: {weights_path}")
+        return torch.load(weights_path, map_location="cpu", weights_only=True)
+
+    def instantiate(self, name: Optional[str] = None) -> nn.Module:
+        """Instantiate the model class from the archived config — without loading weights.
+
+        Useful to inspect the architecture or create a fresh copy at the
+        same hyperparameters without restoring the trained weights.
+
+        Args:
+            name: Component name. Omit when the run has only one model.
+
+        Returns:
+            A newly constructed (untrained) model instance.
+
+        Raises:
+            ModelInstantiationError: If the class cannot be imported or its
+                constructor requires arguments not stored in the config YAML.
+                In that case pass a pre-built instance to :meth:`load` instead.
+        """
+        name = self._resolve_name(name)
+        return self._try_instantiate(name)
+
+    def load(self, name: Optional[str] = None, model: Optional[nn.Module] = None) -> nn.Module:
+        """Load trained weights into a model.
+
+        Three usage patterns:
+
+        .. code-block:: python
+
+            # 1. Auto-instantiate + load weights (works when all constructor
+            #    args are stored as Config custom fields)
+            model = record.load("encoder")
+
+            # 2. Provide your own instance — always works
+            model = record.load("encoder", model=Encoder(hidden=256))
+
+            # 3. Just the weights dict (no model class needed)
+            sd = record.state_dict("encoder")
+            model.load_state_dict(sd)
+
+        Args:
+            name: Component name. Omit when the run has only one model.
+            model: Pre-instantiated model. When ``None`` useml tries to
+                import and construct the class from the archived config YAML.
+
+        Raises:
+            ModelInstantiationError: When ``model`` is ``None`` and the class
+                cannot be auto-instantiated (e.g. requires object-type args).
+                Solution: pass ``model=YourClass(<args>)`` explicitly.
+        """
+        name = self._resolve_name(name)
         weights_path = self._snapshot.path / "weights" / f"{name}.pth"
         if not weights_path.exists():
             raise FileNotFoundError(f"Weights file missing: {weights_path}")
@@ -106,14 +280,21 @@ class RunRecord:
 
     # ── Private ────────────────────────────────────────────────────────────
 
-    def _try_instantiate(self, name: str):
-        """Try to import + instantiate the model class for this component."""
+    def _try_instantiate(self, name: str) -> nn.Module:
+        """Import the model class and construct it from the archived config.
+
+        Raises ``ModelInstantiationError`` with an actionable message when
+        the class cannot be imported or has required constructor arguments
+        that were not stored in the config YAML.
+        """
         import importlib
         import inspect
 
         comp = self._snapshot.components.get(name, {})
         module_path = comp.get("module_path", "")
         class_name = comp.get("class_name", "")
+
+        # ── 1. Import the class ───────────────────────────────────────────
         try:
             if module_path == "__main__":
                 import __main__ as module
@@ -122,25 +303,53 @@ class RunRecord:
             cls = getattr(module, class_name)
         except Exception as exc:
             raise ModelInstantiationError(
-                f"Cannot import {class_name} from '{module_path}'. "
-                f"Pass an instance: run.load(model=MyModel()). [{exc}]"
+                f"Cannot import {class_name!r} from module '{module_path}'. "
+                f"Pass a pre-built instance: record.load(model={class_name}()). "
+                f"[{exc}]"
             ) from exc
 
+        # ── 2. Read config YAML ───────────────────────────────────────────
+        cfg_path = self._snapshot.path / "configs" / f"{name}.yaml"
+        cfg_dict: dict = {}
+        if cfg_path.exists():
+            import yaml
+            with open(cfg_path, encoding="utf-8") as f:
+                cfg_dict = yaml.safe_load(f) or {}
+
+        # ── 3. Identify which config keys match constructor params ─────────
+        sig = inspect.signature(cls.__init__)
+        all_params = list(sig.parameters.values())[1:]   # skip 'self'
+        required = [
+            p.name for p in all_params
+            if p.default is inspect.Parameter.empty
+            and p.kind not in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            )
+        ]
+        matched_kwargs = {
+            p.name: cfg_dict[p.name]
+            for p in all_params
+            if p.name in cfg_dict
+        }
+        missing = [r for r in required if r not in matched_kwargs]
+
+        if missing:
+            raise ModelInstantiationError(
+                f"Cannot auto-instantiate '{class_name}': required argument(s) "
+                f"{missing} are not stored in the snapshot config.\n"
+                f"  → Store them before training:  Config(..., {missing[0]}=<value>)\n"
+                f"  → Or provide an instance:       record.load('{name}', model={class_name}(<args>))\n"
+                f"  → Or load weights only:         record.state_dict('{name}')"
+            )
+
         try:
-            sig = inspect.signature(cls.__init__)
-            params = set(list(sig.parameters.keys())[1:])
-            cfg_path = self._snapshot.path / "configs" / f"{name}.yaml"
-            cfg_dict: dict = {}
-            if cfg_path.exists():
-                import yaml
-                with open(cfg_path, encoding="utf-8") as f:
-                    cfg_dict = yaml.safe_load(f) or {}
-            kwargs = {k: v for k, v in cfg_dict.items() if k in params}
-            return cls(**kwargs) if kwargs else cls()
+            return cls(**matched_kwargs)
         except TypeError as exc:
             raise ModelInstantiationError(
-                f"Cannot instantiate '{class_name}': {exc}. "
-                f"Pass an instance: run.load(model={class_name}(<args>))."
+                f"Cannot instantiate '{class_name}' even with config kwargs "
+                f"{list(matched_kwargs)}: {exc}.\n"
+                f"  → Pass an instance: record.load('{name}', model={class_name}(<args>))"
             ) from exc
 
     def __repr__(self) -> str:
@@ -252,6 +461,67 @@ class RunsView:
                 f"  #{i:<4}{val:<14.4f}{models_str[:22]:<24}{r.message[:28]:<30}"
             )
         return "\n".join(lines)
+
+    def plot(
+        self,
+        metric: str,
+        *,
+        mode: str = "min",
+        top: Optional[int] = None,
+        title: Optional[str] = None,
+    ):
+        """Plot one metric across all (or top N) runs on a single figure.
+
+        Args:
+            metric: Metric to compare, e.g. ``"val_loss"`` or ``"train_accuracy"``.
+            mode: ``"min"`` or ``"max"`` — controls ranking when *top* is set.
+            top: If set, show only the top N runs (ranked by final metric value).
+            title: Figure title. Defaults to ``"<metric> across runs"``.
+
+        Returns:
+            ``(fig, ax)`` tuple.
+
+        Raises:
+            ImportError: If matplotlib is not installed.
+            KeyError: If no run has history for *metric*.
+        """
+        try:
+            import matplotlib.pyplot as plt
+        except ImportError:
+            raise ImportError(
+                "matplotlib is required for plot(). Run: pip install matplotlib"
+            )
+
+        candidates = []
+        for r in self:
+            h = r.history
+            if metric in h and h[metric]:
+                candidates.append((h[metric][-1], r, h[metric]))
+
+        if not candidates:
+            available = sorted({k for r in self for k in r.history})
+            raise KeyError(
+                f"No runs have history for metric '{metric}'. "
+                f"Available: {available}"
+            )
+
+        candidates.sort(key=lambda x: x[0], reverse=(mode == "max"))
+        if top is not None:
+            candidates = candidates[:top]
+
+        fig, ax = plt.subplots(figsize=(9, 4))
+        for final_val, r, vals in candidates:
+            epochs = list(range(1, len(vals) + 1))
+            label = f"{r.id[5:21]} (final {final_val:.4f})"
+            ax.plot(epochs, vals, label=label)
+
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel(metric)
+        ax.set_title(title or f"{metric} across runs")
+        ax.legend(fontsize="small")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        return fig, ax
 
     # ── Write side ─────────────────────────────────────────────────────────
 
@@ -419,7 +689,14 @@ class Run(Trainer):
                 else scheduler
             )
 
-        return self.run(train_loader, val_loader, resume_from=resume_from)
+        result = self.run(train_loader, val_loader, resume_from=resume_from)
+        self._write_history_to_latest()
+        return result
+
+    def epochs(self, n=None):
+        """Epoch iterator — writes the complete history once the loop ends."""
+        yield from super().epochs(n)
+        self._write_history_to_latest()
 
     # ── Override Trainer's session-based checkpoint with project-based ────
 
@@ -455,6 +732,21 @@ class Run(Trainer):
             epoch=epoch,
             **metric_kwargs,
         )
+
+    def _write_history_to_latest(self) -> None:
+        """Write the full per-epoch history to the most recent snapshot.
+
+        Called once at the end of training — not at each checkpoint — so the
+        latest snapshot always holds the complete epoch-by-epoch record.
+        """
+        import yaml as _yaml
+
+        snaps = self._project_obj.log()
+        if not snaps or not self._history:
+            return
+        history_path = snaps[0].path / "history.yaml"
+        with open(history_path, "w", encoding="utf-8") as f:
+            _yaml.safe_dump(dict(self._history), f, default_flow_style=False)
 
     # ── resume() override (Trainer's version uses session._resolve_…) ─────
 
