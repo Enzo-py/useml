@@ -8,6 +8,7 @@ import pytest
 import useml
 from pathlib import Path
 from conftest import ModuleManager, FileManager
+from useml.session.manager import _session
 
 
 # ============================================================================
@@ -31,9 +32,9 @@ def test_session_mount_isolation(isolated_project):
     assert net.Model.VERSION == "v1"
 
     model = net.Model()
-    useml.track("m", model)
+    _session.track("m", model)
     model.w.data.fill_(1.0)
-    useml.commit("v1")
+    _session.commit("v1")
 
     # --- VERSION 2 ---
     FileManager.write_simple_model(module_path, "v2")
@@ -44,16 +45,16 @@ def test_session_mount_isolation(isolated_project):
 
     model = net.Model()
     model.w.data.fill_(2.0)
-    useml.track("m", model)
-    useml.commit("v2")
+    _session.track("m", model)
+    _session.commit("v2")
 
     # TEST: Load current (latest = v2)
-    m_current = useml.load("m")
+    m_current = _session.load("m")
     assert m_current.w.item() == 2.0
     assert net.Model.VERSION == "v2"
 
     # TEST: Mount v1 snapshot via useml.workdir (v1 is \\head~1, v2 is \\latest)
-    useml.mount("\\head~1")
+    _session.mount("\\head~1")
 
     from useml.workdir import net as net_mounted
     assert net_mounted.Model.VERSION == "v1", \
@@ -84,8 +85,8 @@ class TestVaultRuntime:
 
         useml.init(project_env.parent / "vault")
         useml.new("p")
-        useml.track("m", mymodel.MyModel())
-        snap_v1 = useml.commit("v1")
+        _session.track("m", mymodel.MyModel())
+        snap_v1 = _session.commit("v1")
 
         # V2
         FileManager.write_model(model_file, "v2")
@@ -109,16 +110,16 @@ class TestVaultRuntime:
         mymodel = ModuleManager.reload_fresh("mymodel", project_env)
 
         useml.init(project_env.parent / "vault")
-        useml.new("p", auto_focus=True)
-        useml.track("m", mymodel.MyModel())
-        snap = useml.commit("v1")
+        useml.new("p")
+        _session.track("m", mymodel.MyModel())
+        snap = _session.commit("v1")
 
         # V2: update code
         FileManager.write_model(model_file, "v2")
         mymodel = ModuleManager.reload_fresh("mymodel", project_env)
 
         # Mount and verify source was archived in snapshot
-        useml.mount("\\latest")
+        _session.mount("\\latest")
 
         source_dir = snap.path / "source"
         assert source_dir.exists(), f"Source dir not created: {source_dir}"
@@ -144,9 +145,9 @@ class TestVaultRuntime:
         mymodel = ModuleManager.reload_fresh("mymodel", project_env)
 
         useml.init(project_env.parent / "vault")
-        useml.new("p", auto_focus=True)
-        useml.track("m", mymodel.MyModel())
-        snap = useml.commit("archive")
+        useml.new("p")
+        _session.track("m", mymodel.MyModel())
+        snap = _session.commit("archive")
 
         source_dir = snap.path / "source"
         assert source_dir.exists(), \
@@ -172,15 +173,15 @@ class TestVaultRuntime:
 
         useml.init(project_env.parent / "vault")
         useml.new("p")
-        useml.track("m", mymodel.MyModel())
-        useml.commit("v1")
+        _session.track("m", mymodel.MyModel())
+        _session.commit("v1")
 
         # V2: change code
         FileManager.write_model(model_file, "v2")
         mymodel = ModuleManager.reload_fresh("mymodel", project_env)
 
         # Load with code change warning (should not raise)
-        m_loaded = useml.load("m", _from="\\latest")
+        m_loaded = _session.load("m", _from="\\latest")
         assert isinstance(m_loaded, mymodel.MyModel)
 
         # Cleanup
@@ -194,12 +195,12 @@ class TestVaultRuntime:
         mymodel = ModuleManager.reload_fresh("mymodel", project_env)
 
         useml.init(project_env.parent / "vault")
-        useml.new("p", auto_focus=True)
-        useml.track("m", mymodel.MyModel())
-        useml.commit("v1")
+        useml.new("p")
+        _session.track("m", mymodel.MyModel())
+        _session.commit("v1")
 
         modules_before = set(sys.modules.keys())
-        useml.mount("\\latest")
+        _session.mount("\\latest")
         modules_after = set(sys.modules.keys())
 
         # Only useml.workdir.* modules should have been added

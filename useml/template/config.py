@@ -36,18 +36,25 @@ class Config:
     """
 
     _STANDARD_FIELDS: dict = {
-        "epochs":            20,
-        "batch_size":        64,
-        "lr":                1e-3,
-        "optimizer":         "adam",
-        "loss":              "cross_entropy",
-        "device":            "auto",
-        "val_split":         0.1,
-        "num_workers":       0,
-        "data_dir":          ".useml_data",
-        "seed":              42,
-        "checkpoint_every":  5,
-        "checkpoint_metric": "val_loss",
+        "epochs":               20,
+        "batch_size":           64,
+        "lr":                   1e-3,
+        "optimizer":            "adam",
+        "loss":                 "cross_entropy",
+        "device":               "auto",
+        "val_split":            0.1,
+        "num_workers":          0,
+        "data_dir":             ".useml_data",
+        "seed":                 42,
+        # Checkpointing
+        "checkpoint_every":     5,                  # used when strategy = "every_n"
+        "checkpoint_strategy":  "every_n",          # "every_n" | "best" | "last"
+        "checkpoint_metric":    "val_loss",         # metric to track for "best"
+        "checkpoint_mode":      "min",              # "min" | "max"
+        # Early stopping
+        "early_stop_patience":  None,               # None disables early stopping
+        "early_stop_metric":    "val_loss",
+        "early_stop_mode":      "min",
     }
 
     def __init__(self, **kwargs: Any) -> None:

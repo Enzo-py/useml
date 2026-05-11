@@ -284,9 +284,10 @@ class TestSnapshotIntegration:
         bundle = useml.DataBundle("tiny", source=ds, transform=_scale, version="v1")
         cfg = _cfg(checkpoint_every=1)
 
-        useml.train(_TinyNet, bundle, config=cfg)
+        project = useml.focus("bundle-project")
+        project.runs.new(_TinyNet, bundle, config=cfg).train()
 
-        snap = useml.focus("bundle-project")[0]
+        snap = project[0]
         meta = yaml.safe_load((snap.path / "metadata.yaml").read_text())
 
         assert "data" in meta
@@ -303,9 +304,10 @@ class TestSnapshotIntegration:
         bundle = useml.DataBundle("tiny", source=ds, transform=_scale)
         cfg = _cfg(checkpoint_every=1)
 
-        useml.train(_TinyNet, bundle, config=cfg)
+        project = useml.focus("bundle-project")
+        project.runs.new(_TinyNet, bundle, config=cfg).train()
 
-        snap = useml.focus("bundle-project")[0]
+        snap = project[0]
         transform_file = snap.path / "source" / bundle.inline_source_key()
         assert transform_file.exists()
         assert "def _scale" in transform_file.read_text()
@@ -315,9 +317,11 @@ class TestSnapshotIntegration:
 
         ds = _TinyDS()
         cfg = _cfg(checkpoint_every=1)
-        useml.train(_TinyNet, ds, config=cfg)
 
-        snap = useml.focus("bundle-project")[0]
+        project = useml.focus("bundle-project")
+        project.runs.new(_TinyNet, ds, config=cfg).train()
+
+        snap = project[0]
         meta = yaml.safe_load((snap.path / "metadata.yaml").read_text())
         assert "data" not in meta
 
@@ -329,10 +333,11 @@ class TestSnapshotIntegration:
         bundle2 = useml.DataBundle("tiny", source=ds, transform=_scale)
         cfg = _cfg(checkpoint_every=1)
 
-        useml.train(_TinyNet, bundle1, config=cfg)
-        useml.train(_TinyNet, bundle2, config=cfg)
+        project = useml.focus("bundle-project")
+        project.runs.new(_TinyNet, bundle1, config=cfg).train()
+        project.runs.new(_TinyNet, bundle2, config=cfg).train()
 
-        snaps = useml.focus("bundle-project").log()
+        snaps = project.log()
         metas = [
             yaml.safe_load((s.path / "metadata.yaml").read_text())["data"]
             for s in snaps
@@ -343,13 +348,14 @@ class TestSnapshotIntegration:
 
     def test_manual_commit_passes_bundle_meta(self, tmp_vault):
         import yaml
+        from useml.session.manager import _session
 
         ds = _TinyDS()
         bundle = useml.DataBundle("tiny", source=ds, transform=_scale)
         model = _TinyNet()
 
-        useml.track("net", model)
-        useml.commit(
+        _session.track("net", model)
+        _session.commit(
             "manual with bundle",
             bundle_meta=bundle.to_meta_dict(),
         )

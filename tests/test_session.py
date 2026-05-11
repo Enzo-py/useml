@@ -29,17 +29,17 @@ def test_dirty_state_tracking(tmp_path):
     useml.new("proj_a")
     assert _session._is_dirty is False
     
-    useml.track("model", DummyModel())
+    _session.track("model", DummyModel())
     assert _session._is_dirty is True
     
-    useml.commit("First save")
+    _session.commit("First save")
     assert _session._is_dirty is False
 
 def test_error_uncommitted_switch(tmp_path):
     """Verifies that switching focus without committing or stashing raises an error."""
     useml.init(vault_path=tmp_path)
     useml.new("proj_a")
-    useml.track("m1", DummyModel())
+    _session.track("m1", DummyModel())
     
     # Attempting to switch should fail
     with pytest.raises(UncommittedSessionError, match="unsaved changes"):
@@ -53,7 +53,7 @@ def test_force_focus_discards_changes(tmp_path):
     """Verifies that focus(force=True) bypasses the dirty check and wipes RAM."""
     useml.init(vault_path=tmp_path)
     useml.new("proj_a")
-    useml.track("m1", DummyModel())
+    _session.track("m1", DummyModel())
     
     # Forced switch
     useml.focus("proj_b", force=True)
@@ -71,19 +71,19 @@ def test_stash_and_restore_flow(tmp_path):
     # 1. Start Project A
     useml.new("proj_a")
     model_a = DummyModel(1.0)
-    useml.track("net_a", model_a)
+    _session.track("net_a", model_a)
     assert _session._is_dirty is True
     
     # 2. Stash A
-    useml.stash()
+    _session.stash()
     assert _session._project is None
     assert len(_session.components) == 0
     assert "proj_a" in _session._stash
     
     # 3. Work on Project B
     useml.new("proj_b")
-    useml.track("net_b", DummyModel(2.0))
-    useml.commit("Save B")
+    _session.track("net_b", DummyModel(2.0))
+    _session.commit("Save B")
     
     # 4. Return to Project A (should auto-restore from stash)
     useml.focus("proj_a")
@@ -97,27 +97,24 @@ def test_stash_overwrites_on_re_stash(tmp_path):
     useml.init(vault_path=tmp_path)
     useml.new("proj_a")
     
-    useml.track("m", DummyModel(1.0))
-    useml.stash()
+    _session.track("m", DummyModel(1.0))
+    _session.stash()
     
     useml.focus("proj_a")
-    useml.track("m_new", DummyModel(2.0)) # Added a new component
-    useml.stash()
+    _session.track("m_new", DummyModel(2.0)) # Added a new component
+    _session.stash()
     
     assert len(_session._stash["proj_a"].components) == 2
 
 # --- DASHBOARD UPDATES ---
 
-def test_show_dirty_warning(tmp_path, capsys):
-    """Ensures show() displays a warning when the session is dirty."""
+def test_project_show_renders(tmp_path, capsys):
+    """project.show() prints the project name and run count."""
     useml.init(vault_path=tmp_path)
-    useml.new("dirty_proj")
-    useml.track("m", DummyModel())
-    # No commit — _is_dirty stays True
-    useml.show()
+    project = useml.new("show_proj")
+    project.show()
     out = capsys.readouterr().out
-    assert "WARNING" in out
-    assert "unsaved components" in out
+    assert "show_proj" in out
 
 # --- REGRESSION TESTS ---
 
@@ -125,7 +122,7 @@ def test_focus_same_project_is_no_op(tmp_path):
     """Focusing on the current project should not trigger dirty errors or wipe RAM."""
     useml.init(vault_path=tmp_path)
     useml.new("proj_a")
-    useml.track("m", DummyModel())
+    _session.track("m", DummyModel())
     
     # This should NOT raise UncommittedSessionError
     useml.focus("proj_a") 
@@ -157,37 +154,37 @@ def test_session_mount_isolation(tmp_path):
         assert net.Model.VERSION == "v1"
 
         model = net.Model()
-        useml.track("m", model)
+        _session.track("m", model)
 
         model.w.data.fill_(1.0)
-        snap_v1 = useml.commit("v1")
+        snap_v1 = _session.commit("v1")
 
         # --- VERSION 2 (code + poids) ---
         FileManager.write_simple_model(module_path, "v2")
         net = ModuleManager.reload_fresh("net", project_dir)
 
         model.w.data.fill_(2.0)
-        useml.track("m", model)
-        useml.commit("v2")
+        _session.track("m", model)
+        _session.commit("v2")
 
         # -------------------------
         # TEST LOAD CURRENT
         # -------------------------
-        m_current = useml.load("m")
+        m_current = _session.load("m")
         assert m_current.w.item() == 2.0
         assert net.Model.VERSION == "v2"
 
         # -------------------------
         # TEST LOAD SNAPSHOT
         # -------------------------
-        useml.mount("\\latest")
+        _session.mount("\\latest")
 
-        m_snap = useml.load("m")
+        m_snap = _session.load("m")
         assert m_snap.w.item() == 2.0  # latest snapshot
 
-        useml.mount("\\head~1")
+        _session.mount("\\head~1")
 
-        m_old = useml.load("m")
+        m_old = _session.load("m")
         assert m_old.w.item() == 1.0
 
         # -------------------------
@@ -200,7 +197,7 @@ def test_session_mount_isolation(tmp_path):
         assert "VERSION = 'v1'" in snap_code
 
         # back to current
-        useml.mount("\\workdir")
+        _session.mount("\\workdir")
 
         net = ModuleManager.reload_fresh("net", project_dir)
         assert net.Model.VERSION == "v2"

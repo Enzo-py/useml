@@ -12,7 +12,7 @@ dev = [
 
 [project]
 name = "useml"
-version = "0.1.0"
+version = "0.3.0"
 description = "Minimalist ML experiment versioning for PyTorch — checkpointing, source archiving, and model isolation."
 readme = "README.md"
 requires-python = ">=3.8"

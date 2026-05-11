@@ -22,5 +22,9 @@ __pycache__/
 *.pth
 *.ckpt
 
+# IDE / OS
+.DS_Store
+.claude/
+
 # testing
 playground

@@ -13,6 +13,7 @@ import useml
 from useml.template.config import Config
 from useml.dataset import load_dataset
 from useml.template.trainer import Trainer, run_training
+from useml.session.manager import _session
 
 
 # ====================================================================
@@ -156,25 +157,25 @@ class TestVaultIntegration:
                 f"weights/model.pth missing in {snap.name}"
 
     def test_load_latest_after_training(self, tmp_path):
-        """useml.load() must return a model with correct weights after run_training."""
+        """_session.load() must return a model with correct weights after run_training."""
         useml.init(str(tmp_path / "vault"))
         useml.new("ANDNet")
         config = _cfg(epochs=300, checkpoint_every=100)
         run_training(ANDNet, ANDDataset(), config=config)
 
-        loaded = useml.load("model")
+        loaded = _session.load("model")
         assert isinstance(loaded, ANDNet)
         assert _predict_and11(loaded) == 1, \
             "Loaded model failed to predict AND(1,1)=1"
 
     def test_load_with_explicit_from(self, tmp_path):
-        """useml.load(_from='\\latest') must return a usable ANDNet."""
+        """_session.load(_from='\\latest') must return a usable ANDNet."""
         useml.init(str(tmp_path / "vault"))
         useml.new("ANDNet")
         config = _cfg(epochs=100, checkpoint_every=50)
         run_training(ANDNet, ANDDataset(), config=config)
 
-        loaded = useml.load("model", _from="\\latest")
+        loaded = _session.load("model", _from="\\latest")
         assert isinstance(loaded, ANDNet)
 
     def test_multiple_checkpoints_ordered(self, tmp_path):
@@ -189,8 +190,8 @@ class TestVaultIntegration:
             [d for d in project_dir.iterdir() if d.name.startswith("snap_")],
             key=lambda d: d.name,
         )
-        loaded_latest = useml.load("model", _from="\\latest")
-        loaded_head0 = useml.load("model", _from=snaps[-1].name)
+        loaded_latest = _session.load("model", _from="\\latest")
+        loaded_head0 = _session.load("model", _from=snaps[-1].name)
 
         p1 = _predict_and11(loaded_latest)
         p2 = _predict_and11(loaded_head0)
@@ -204,14 +205,21 @@ class TestVaultIntegration:
 
 class TestPublicAPI:
 
-    def test_useml_train_returns_history(self):
-        """useml.train() must return a dict with train_loss and val_loss (no vault)."""
-        config = _cfg(epochs=10)
-        history = useml.train(ANDNet, ANDDataset(), config=config)
-
-        assert isinstance(history, dict)
-        assert "train_loss" in history and "val_loss" in history
-        assert len(history["train_loss"]) == 10
+    def test_run_train_returns_history(self):
+        """run.train() must return a dict with train_loss and val_loss."""
+        import tempfile, shutil
+        vault_dir = tempfile.mkdtemp()
+        try:
+            useml.init(vault_dir)
+            project = useml.new("andnet-test")
+            config = _cfg(epochs=10)
+            run = project.runs.new(ANDNet, ANDDataset(), config=config)
+            history = run.train()
+            assert isinstance(history, dict)
+            assert "train_loss" in history and "val_loss" in history
+            assert len(history["train_loss"]) == 10
+        finally:
+            shutil.rmtree(vault_dir)
 
     def test_useml_model_subclassable(self):
         """useml.Model must be usable as an nn.Module base class."""
