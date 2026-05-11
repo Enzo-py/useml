@@ -20,8 +20,11 @@ def _is_local_file(path: str, project_root: str) -> bool:
 
 def _resolve_import(module_name: str, project_root: str) -> str | None:
     try:
-        module = __import__(module_name, fromlist=["*"])
-        return inspect.getsourcefile(module)
+        import importlib.util
+        spec = importlib.util.find_spec(module_name)
+        if spec is None or spec.origin is None:
+            return None
+        return spec.origin
     except Exception:
         return None
 
