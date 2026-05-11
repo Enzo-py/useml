@@ -690,13 +690,35 @@ class Run(Trainer):
             )
 
         result = self.run(train_loader, val_loader, resume_from=resume_from)
+
+        if getattr(self, "_was_interrupted", False) and self._epoch > 0:
+            monitor = self._last_val_metrics or self._last_train_metrics
+            if monitor:
+                print("  💾  Saving current model state...")
+                try:
+                    self._do_checkpoint(self._epoch, monitor)
+                except Exception as exc:
+                    print(f"  ⚠  Emergency save failed: {exc}")
+
         self._write_history_to_latest()
         return result
 
     def epochs(self, n=None):
-        """Epoch iterator — writes the complete history once the loop ends."""
-        yield from super().epochs(n)
-        self._write_history_to_latest()
+        """Epoch iterator — writes complete history when the loop ends or is interrupted."""
+        try:
+            yield from super().epochs(n)
+        except KeyboardInterrupt:
+            print(f"\n  ⏸  Training interrupted at epoch {self._epoch}.")
+            monitor = self._last_val_metrics or self._last_train_metrics
+            if monitor and self._epoch > 0:
+                print("  💾  Saving current model state...")
+                try:
+                    self._do_checkpoint(self._epoch, monitor)
+                except Exception as exc:
+                    print(f"  ⚠  Emergency save failed: {exc}")
+            raise   # let Jupyter show "KeyboardInterrupt" (cell stops, kernel lives)
+        finally:
+            self._write_history_to_latest()
 
     # ── Override Trainer's session-based checkpoint with project-based ────
 

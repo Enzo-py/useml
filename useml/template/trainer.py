@@ -513,45 +513,52 @@ class Trainer:
 
         primary = self.model
         opt     = self.optimizer
+        self._was_interrupted = False
 
-        for epoch in self.epochs(self.config.epochs):
-            t0 = time.time()
+        try:
+            for epoch in self.epochs(self.config.epochs):
+                t0 = time.time()
 
-            # ── train phase ────────────────────────────────────────────
-            primary.train()
-            for batch in train_loader:
-                opt.zero_grad()
-                loss = self.step(batch)
-                loss.backward()
-                opt.step()
-                if self.scheduler is not None and self.scheduler_per_batch:
-                    self.scheduler.step()
-                bs = _batch_size(batch)
-                batch_m: Dict[str, float] = {"loss": loss.item()}
-                if self.metrics:
-                    with torch.no_grad():
-                        for name, fn in self.metrics.items():
-                            batch_m[name] = float(fn(primary, batch, self.config.device))
-                self.update(n=bs, **batch_m)
-
-            # ── val phase ──────────────────────────────────────────────
-            primary.eval()
-            with torch.no_grad():
-                for batch in val_loader:
+                # ── train phase ────────────────────────────────────────────
+                primary.train()
+                for batch in train_loader:
+                    opt.zero_grad()
                     loss = self.step(batch)
+                    loss.backward()
+                    opt.step()
+                    if self.scheduler is not None and self.scheduler_per_batch:
+                        self.scheduler.step()
                     bs = _batch_size(batch)
-                    batch_v: Dict[str, float] = {"loss": loss.item()}
+                    batch_m: Dict[str, float] = {"loss": loss.item()}
                     if self.metrics:
-                        for name, fn in self.metrics.items():
-                            batch_v[name] = float(fn(primary, batch, self.config.device))
-                    self.update_val(n=bs, **batch_v)
+                        with torch.no_grad():
+                            for name, fn in self.metrics.items():
+                                batch_m[name] = float(fn(primary, batch, self.config.device))
+                    self.update(n=bs, **batch_m)
 
-            self.epoch_end(epoch, elapsed=time.time() - t0)
+                # ── val phase ──────────────────────────────────────────────
+                primary.eval()
+                with torch.no_grad():
+                    for batch in val_loader:
+                        loss = self.step(batch)
+                        bs = _batch_size(batch)
+                        batch_v: Dict[str, float] = {"loss": loss.item()}
+                        if self.metrics:
+                            for name, fn in self.metrics.items():
+                                batch_v[name] = float(fn(primary, batch, self.config.device))
+                        self.update_val(n=bs, **batch_v)
+
+                self.epoch_end(epoch, elapsed=time.time() - t0)
+
+        except KeyboardInterrupt:
+            self._was_interrupted = True
+            print(f"\n  ⏸  Training interrupted at epoch {self._epoch}.")
 
         best_val = min(self._history.get("val_loss", [float("inf")]))
-        print(f"{'=' * 55}")
-        print(f"  Best val_loss: {best_val:.4f}")
-        print(f"{'=' * 55}\n")
+        if not self._was_interrupted:
+            print(f"{'=' * 55}")
+            print(f"  Best val_loss: {best_val:.4f}")
+            print(f"{'=' * 55}\n")
 
         return self.history
 

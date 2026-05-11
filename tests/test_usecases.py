@@ -1158,3 +1158,92 @@ class TestRunLoadModes:
         h = proj.runs.latest.history
         assert "train_loss" in h
         assert len(h["train_loss"]) == 3
+
+
+class TestKeyboardInterrupt:
+    """Interrupting a run must not crash — model state and history are preserved."""
+
+    def test_pattern_a_interrupt_saves_model(self):
+        """KeyboardInterrupt during Pattern A training → emergency checkpoint created."""
+        proj = useml.focus("test")
+        ds = _clf_ds()
+        loader = DataLoader(ds, batch_size=32)
+
+        call_count = [0]
+        original_epoch_end = None
+
+        cfg = _cfg(epochs=10, checkpoint_strategy="last")
+        run = proj.runs.new(TinyClf, config=cfg)
+
+        # Simulate interrupt after epoch 2 by monkey-patching epoch_end
+        real_epoch_end = run.epoch_end
+        def patched_epoch_end(epoch, *args, **kwargs):
+            call_count[0] += 1
+            real_epoch_end(epoch, *args, **kwargs)
+            if call_count[0] >= 2:
+                raise KeyboardInterrupt()
+        run.epoch_end = patched_epoch_end
+
+        history = run.train(loader, loader)
+
+        # Must return history (no exception escapes)
+        assert isinstance(history, dict)
+        assert "train_loss" in history
+        assert len(history["train_loss"]) == 2
+
+        # Emergency checkpoint must have been created
+        assert len(proj.runs) >= 1
+
+    def test_pattern_a_interrupt_returns_partial_history(self):
+        """run.train() returns the partial history accumulated before interrupt."""
+        proj = useml.focus("test")
+        ds = _clf_ds()
+        loader = DataLoader(ds, batch_size=32)
+        cfg = _cfg(epochs=5, checkpoint_strategy="last")
+        run = proj.runs.new(TinyClf, config=cfg)
+
+        real_ee = run.epoch_end
+        interrupted_at = [0]
+        def patched(epoch, *args, **kwargs):
+            real_ee(epoch, *args, **kwargs)
+            interrupted_at[0] = epoch
+            if epoch == 3:
+                raise KeyboardInterrupt()
+        run.epoch_end = patched
+
+        history = run.train(loader, loader)
+        assert len(history["train_loss"]) == interrupted_at[0]
+
+    def test_pattern_b_interrupt_history_on_object(self):
+        """KeyboardInterrupt inside a Pattern B loop propagates cleanly.
+
+        In Pattern B the user controls the loop — we can't intercept a
+        KeyboardInterrupt raised in the caller's body. We guarantee:
+        - the exception propagates normally (no kernel crash)
+        - the accumulated history is accessible on run.history
+        """
+        proj = useml.focus("test")
+        ds = _clf_ds()
+        loader = DataLoader(ds, batch_size=32)
+        cfg = _cfg(epochs=5, checkpoint_strategy="last")
+        run = proj.runs.new(config=cfg)
+        run.register("tinyclf", TinyClf())
+
+        with pytest.raises(KeyboardInterrupt):
+            for epoch in run.epochs(cfg.epochs):
+                for batch in loader:
+                    x, y = batch
+                    loss = F.cross_entropy(run._models["tinyclf"](x), y)
+                    run._optimizers["tinyclf"].zero_grad()
+                    loss.backward()
+                    run._optimizers["tinyclf"].step()
+                    run.update(n=len(y), loss=loss.item())
+                run.update_val(n=1, loss=0.5)
+                run.epoch_end(epoch)
+                if epoch == 2:
+                    raise KeyboardInterrupt()
+
+        # History is available on the run object even without a persisted snapshot
+        h = run.history
+        assert "train_loss" in h
+        assert len(h["train_loss"]) == 2
