@@ -2,6 +2,7 @@
 
     useml init [--root DIR] [--yes]   set up this machine and this project (adds, never overwrites)
     useml check [--measure]           check that everything is in place
+    useml docs [topic] [--path]       read the documentation (installed with useml)
     useml paths                       where every cache goes (and where weights already are)
     useml hub ls                      what has been downloaded, how big, last used
     useml hub get <uri> [--extract]   download, print the local path
@@ -230,6 +231,37 @@ def _data(args) -> int:
     return 1
 
 
+def docs_folder():
+    from pathlib import Path
+
+    return Path(__file__).resolve().parent / "docs"
+
+
+def _docs(args) -> int:
+    folder = docs_folder()
+    guides = sorted(path.stem for path in folder.glob("*.md"))
+    if args.path:
+        print(folder)
+        return 0
+    if not args.topic:
+        print(f"useml documentation ({folder}):")
+        for name in guides:
+            first = next((line.lstrip("# ").strip() for line in
+                          (folder / f"{name}.md").read_text().splitlines()
+                          if line.startswith("# ")), "")
+            print(f"  {name:<16} {first}")
+        print("\nuseml docs <topic> prints one; start with index or quickstart.")
+        return 0
+    wanted = args.topic.lower().removesuffix(".md")
+    matches = [name for name in guides if name.lower() == wanted] or \
+        [name for name in guides if name.lower().startswith(wanted) or wanted in name.lower()]
+    if not matches:
+        print(f"no guide {args.topic!r}; guides: {', '.join(guides)}", file=sys.stderr)
+        return 1
+    print((folder / f"{matches[0]}.md").read_text(), end="")
+    return 0
+
+
 def _config(args) -> int:
     from . import config
 
@@ -315,7 +347,7 @@ def _exp(args) -> int:
     return 1
 
 
-def main(argv=None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="useml", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -327,6 +359,9 @@ def main(argv=None) -> int:
     init_parser.add_argument("--yes", action="store_true", help="write without asking")
     init_parser.add_argument("--no-machine", action="store_true")
     init_parser.add_argument("--no-project", action="store_true")
+    docs_parser = commands.add_parser("docs", help="read the documentation")
+    docs_parser.add_argument("topic", nargs="?")
+    docs_parser.add_argument("--path", action="store_true", help="print the docs folder")
     check_parser = commands.add_parser("check", help="check that everything is in place")
     check_parser.add_argument("--measure", action="store_true",
                                help="also measure the caches left in the home (slow)")
@@ -423,7 +458,11 @@ def main(argv=None) -> int:
         if command == "stop":
             sub.add_argument("--now", action="store_true")
 
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
     from . import hub, paths
 
     if args.command == "init":
@@ -432,6 +471,8 @@ def main(argv=None) -> int:
         init(args.project, root=args.root, store=args.store, yes=args.yes, machine=not args.no_machine,
              project_setup=not args.no_project)
         return 0
+    if args.command == "docs":
+        return _docs(args)
     if args.command == "check":
         from ._setup import check
 

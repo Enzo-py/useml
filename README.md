@@ -1,10 +1,8 @@
 # useml
 
-One root for every ML cache, one gate for every download.
-
-```bash
-pip install "useml[all]"
-```
+A toolkit for machine-learning projects on big machines: one root for every cache, one
+gate for every download, datasets processed once and loaded by name, YAML configs, and
+experiments that run in the background, survive a closed laptop, and say why they crashed.
 
 ## Quick start
 
@@ -13,7 +11,23 @@ pip install "useml[all]"
 cd my-project
 useml init            # shows what it would set up (adds, never overwrites); confirm to write
 useml check           # checks that everything resolves
+useml docs            # the full documentation, installed with the package
 ```
+
+## Documentation
+
+The guides are in [`src/useml/docs/`](src/useml/docs/index.md) and installed with the
+package (`useml docs <topic>`):
+
+- [Quickstart](src/useml/docs/quickstart.md) · [Adopt useml in a project](src/useml/docs/adopt.md)
+- [Caches and downloads](src/useml/docs/paths-and-hub.md) · [Cache store](src/useml/docs/store.md)
+  · [Processed data](src/useml/docs/data.md) · [Configs](src/useml/docs/config.md)
+  · [Experiences](src/useml/docs/exp.md)
+- [Troubleshooting](src/useml/docs/troubleshooting.md) · [Reference](src/useml/docs/reference.md)
+  · [FAQ](src/useml/docs/faq.md)
+- [Instructions for AI coding assistants](src/useml/docs/SKILL.md)
+
+The sections below are a tour.
 
 ## One root per machine
 
