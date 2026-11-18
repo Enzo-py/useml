@@ -25,6 +25,11 @@
     useml data follow <job>           a bar fed by a running job
     useml data rm <name> [--table]    forget a name (and delete its table if unused)
 
+    useml datasets ls                 registered datasets: prepared, records, size
+    useml datasets info <name> [--split S]   card, splits, fields (a summary)
+    useml datasets prepare <name> [--force]  download what is missing, build the index, check
+    useml datasets check <name>       run the driver's check
+
     useml config ls                   every config, by kind
     useml config show <name> [key=value ...]   the resolved YAML and its hash
     useml config describe <name>      what the file says, without building
@@ -262,6 +267,35 @@ def _docs(args) -> int:
     return 0
 
 
+def _datasets(args) -> int:
+    from . import datasets
+
+    command = args.datasets_command
+    if command == "ls":
+        entries = datasets.ls()
+        if not entries:
+            print("no dataset driver registered (declare packages in [tool.useml.datasets])")
+        for entry in entries:
+            state = ("ready" if entry["current"] else "outdated") if entry["prepared"] else "—"
+            records = f"{entry['records']} records" if entry["records"] is not None else ""
+            splits = ", ".join(f"{k} {v}" for k, v in entry["splits"].items())
+            print(f"{state:<9} {human(entry['bytes']):>10}  {entry['name']:<20} {records:<16} {splits}")
+        return 0
+    if command == "info":
+        print(datasets.load(args.name, args.split).summary())
+        return 0
+    if command == "prepare":
+        meta = datasets.prepare(args.name, force=args.force)
+        print(f"{args.name}: {meta['count']} records, splits {meta['splits']}")
+        return 0
+    if command == "check":
+        loaded = datasets.load(args.name, prepare_first=False)
+        problems = loaded.driver.check(loaded)
+        print("\n".join(problems) if problems else f"{args.name}: fine")
+        return 1 if problems else 0
+    return 1
+
+
 def _config(args) -> int:
     from . import config
 
@@ -425,6 +459,18 @@ def build_parser() -> argparse.ArgumentParser:
     rm_parser.add_argument("name")
     rm_parser.add_argument("--table", action="store_true")
 
+    datasets_parser = commands.add_parser("datasets", help="datasets and their drivers")
+    datasets_commands = datasets_parser.add_subparsers(dest="datasets_command", required=True)
+    datasets_commands.add_parser("ls")
+    info_dataset = datasets_commands.add_parser("info")
+    info_dataset.add_argument("name")
+    info_dataset.add_argument("--split")
+    prepare_dataset = datasets_commands.add_parser("prepare")
+    prepare_dataset.add_argument("name")
+    prepare_dataset.add_argument("--force", action="store_true")
+    check_dataset = datasets_commands.add_parser("check")
+    check_dataset.add_argument("name")
+
     config_parser = commands.add_parser("config", help="YAML configs")
     config_commands = config_parser.add_subparsers(dest="config_command", required=True)
     config_commands.add_parser("ls")
@@ -482,6 +528,8 @@ def main(argv=None) -> int:
         return 1 if any(level == "✗" for level, _ in checks) else 0
     if args.command == "exp":
         return _exp(args)
+    if args.command == "datasets":
+        return _datasets(args)
     if args.command == "config":
         return _config(args)
     if args.command == "data":

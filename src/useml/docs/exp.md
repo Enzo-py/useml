@@ -38,6 +38,7 @@ in another process:
 | the reference returned by an earlier `e.step` | that step's output |
 | an object from `config.load(name, **overrides)` | the same config, built again |
 | `data.load(name)` | the same processed dataset |
+| `datasets.load(name, split)` (and `.field(...)`) | the same dataset and split |
 | an output of another experience (`exp.get(...)`) | that output, loaded from its folder |
 
 Anything else raises **on the line that declares it**, with what to do instead. An object

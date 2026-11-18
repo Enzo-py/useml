@@ -1,12 +1,13 @@
 # useml documentation
 
 useml is a toolkit for machine-learning projects that run on big machines. It solves
-five problems that grow with every project:
+six problems that grow with every project:
 
 | Problem | useml answer | Guide |
 |---|---|---|
 | Caches (Hugging Face, torch, pip…) fill the home folder and spread everywhere | one cache root per machine | [paths-and-hub.md](paths-and-hub.md) |
 | Downloads go through many libraries, some in parallel | one gate, sequential by default | [paths-and-hub.md](paths-and-hub.md) |
+| Every dataset has its own download and parsing code | drivers: declared once, loaded by name | [datasets.md](datasets.md) |
 | Results are recomputed because nothing remembers them | a key → value cache with a disk budget | [store.md](store.md) |
 | Datasets are re-embedded inside every experiment | data processed once, loaded by name | [data.md](data.md) |
 | Models are hard to rebuild, experiments die silently | YAML configs and supervised experiments | [config.md](config.md), [exp.md](exp.md) |

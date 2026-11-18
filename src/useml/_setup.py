@@ -446,6 +446,20 @@ def check(*, measure: bool = False) -> list[tuple[str, str]]:
     except Exception as error:                               # noqa: BLE001
         add(None, f"configs: {error}")
     try:
+        from . import datasets
+
+        entries = datasets.ls()
+        if entries:
+            ready = [e["name"] for e in entries if e["current"]]
+            outdated = [e["name"] for e in entries if e["prepared"] and not e["current"]]
+            add(True, f"datasets {datasets.root()}: {len(entries)} drivers, {len(ready)} ready"
+                + (f", {len(entries) - len(ready) - len(outdated)} never prepared"
+                   if len(entries) - len(ready) - len(outdated) else ""))
+            if outdated:
+                add(None, f"datasets whose driver changed (rebuilt at next load): {outdated}")
+    except Exception as error:                               # noqa: BLE001
+        add(False, f"datasets: {error}")
+    try:
         from . import exp
 
         experiences = exp.ls()

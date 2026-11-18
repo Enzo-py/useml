@@ -1,6 +1,6 @@
 ---
 name: useml
-description: Use when a project uses (or should use) the `useml` Python package — caches and downloads (useml.paths, useml.hub), the cache store (useml.store), datasets processed once and loaded by name (useml.data), YAML configs (useml.config), experiences run in the background (useml.exp), `useml init` / `useml check`, or a run that crashed. Read before writing code that calls useml or before diagnosing a useml run.
+description: Use when a project uses (or should use) the `useml` Python package — caches and downloads (useml.paths, useml.hub), the cache store (useml.store), dataset drivers (useml.datasets), datasets processed once and loaded by name (useml.data), YAML configs (useml.config), experiences run in the background (useml.exp), `useml init` / `useml check`, or a run that crashed. Read before writing code that calls useml or before diagnosing a useml run.
 ---
 
 # Working with useml
@@ -10,7 +10,7 @@ code, instead of guessing the API:
 
 ```bash
 useml docs              # list the guides and their folder
-useml docs exp          # print one guide: quickstart, adopt, paths-and-hub, store, data,
+useml docs exp          # print one guide: quickstart, adopt, paths-and-hub, store, data, datasets,
                         # config, exp, troubleshooting, reference, faq
 ```
 
@@ -34,6 +34,9 @@ useml docs exp          # print one guide: quickstart, adopt, paths-and-hub, sto
 - **Process datasets with `useml.data`, outside experiences**, give them a name
   (`data.process(..., name="...")`), and load them in experiences with `data.load(name)`.
   Do not re-embed data inside an experience step.
+- **Datasets are declared by drivers** (`useml docs datasets`): load them with
+  `datasets.load(name, split)`; never hard-code their download or parsing in a step. A
+  filtered dataset cannot be passed to an experience: declare a split instead.
 - **Processor rows have a fixed shape.** Pool or pad variable-length outputs.
 - **Bump a processor's `version`** when its code changes what it computes.
 - **Declare a store space before writing to it**: `store.open().declare("family/name",

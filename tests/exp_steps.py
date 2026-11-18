@@ -115,3 +115,7 @@ def boom():
 def sleepy(seconds: float):
     time.sleep(seconds)
     return {"slept": seconds}
+
+
+def rows_of(dataset):
+    return len(list(dataset))

@@ -21,6 +21,9 @@ max_size = "450GB"                 # the budget of `useml store gc`
 root = "/data/me/useml/data"       # default: <root>/data
 max_size = "300GB"                 # refuse to write a table beyond this
 
+[datasets]
+root = "/data/me/datasets"         # default: <root>/datasets
+
 [exp]
 root = "/data/me/experiments"      # used when the project does not set one
 notify = "my-command"              # run when an experience ends or crashes
@@ -40,6 +43,10 @@ kinds = {model = "models"}
 default_kind = "model"
 pythonpath = ["."]
 
+[datasets]
+packages = ["mypkg.drivers"]       # where dataset drivers are registered
+root = "data"                      # optional
+
 [exp]
 root = "experiences"
 ```
@@ -57,6 +64,7 @@ folder wins.
 | `USEML_NO_AUTO=1` | `import useml` changes nothing (call `paths.apply()` and `hub.apply_configured_policy()` yourself) |
 | `USEML_STORE_ROOT` | the store folder |
 | `USEML_DATA_ROOT` | the processed-data folder |
+| `USEML_DATASETS_ROOT` | the datasets folder |
 | `USEML_EXP_ROOT` | the experiences folder |
 | `USEML_CONFIG_ROOT` | the config folder (no type package) |
 | `USEML_NO_TMUX=1` | never start runs in tmux |
@@ -80,6 +88,7 @@ folder wins.
 | `useml store move <dest> [--delete-source]` | move the store |
 | `useml store unpin <owner>` | release pins |
 | `useml data ls` / `tables` / `info <name>` / `jobs` / `follow <job>` / `rm <name> [--table]` | processed datasets |
+| `useml datasets ls` / `info <name> [--split S]` / `prepare <name> [--force]` / `check <name>` | datasets and their drivers |
 | `useml config ls` / `describe <name>` / `show <name> [k=v ...]` / `find <hash>` | configs |
 | `useml exp ls` / `show` / `follow` / `log [-n N]` / `run [--no-follow]` / `stop [--now]` / `why` / `attach` / `stack` `<name>` | experiences |
 | `useml exp bundle <name> [-o DIR] [--data auto\|rows\|none] [--archive] [--checkpoints] [--partial]` | standalone archive |
@@ -92,6 +101,7 @@ folder wins.
 ```python
 import useml
 from useml import paths, hub, store, data, config, exp
+from useml import datasets as ds
 
 paths.root(); paths.home(); paths.apply(); paths.diagnose()
 hub.get(uri, dest=None, allow=None, ignore=None, extract_archive=False, refresh=False)
@@ -105,6 +115,7 @@ data.processor(name, version=1, batch_size=32, dtype="float16", ignore=("device"
 data.process(source, processor, name=None, batch_size=None, detach=False, dry_run=False, **params)
 data.load(name); data.ls(); data.tables(); data.rm(name, table=False); data.jobs()
 
+ds.load(name, split=None); ds.prepare(name, force=False); ds.ls(); ds.register(DriverClass)
 config.load(name, kind=None, reload=False, overrides=None, **overrides)
 config.load_raw(...); config.describe(name); config.find(hash)
 config.create(name, obj); config.get_config(obj); config.diff(a, b)

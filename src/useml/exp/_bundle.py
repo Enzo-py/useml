@@ -246,6 +246,16 @@ def bundle(name: str, destination=None, *, data: str = "auto", max_data="2GB",
                             destination / "experiences" / other[0] / "steps" / other[1],
                             ignore=shutil.ignore_patterns(*ignore))
 
+        # raw datasets: never copied (they can weigh TBs); their drivers are in code/
+        manifest["raw_datasets"] = sorted(
+            {(r["name"], r.get("split") or "", r["fingerprint"])
+             for r in _walk_recipes(spec["steps"], "$dataset")})
+        if manifest["raw_datasets"]:
+            manifest["warnings"].append(
+                "raw datasets are not copied: " + ", ".join(
+                    f"{n}" + (f"[{s}]" if s else "") for n, s, _ in manifest["raw_datasets"])
+                + "; their drivers in code/ download and prepare them again")
+
         # data
         datasets = sorted({recipe["name"] for recipe in _walk_recipes(spec["steps"], "$data")})
         manifest["datasets"] = []

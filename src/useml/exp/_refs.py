@@ -98,6 +98,9 @@ def recipe(value, builder, *, where: str):
     origin = origin_of(value)
     if isinstance(origin, dict):
         return {"$output": dict(origin)}
+    dataset = _dataset_recipe(value, where)
+    if dataset is not None:
+        return dataset
     processed = _processed_recipe(value, where)
     if processed is not None:
         return processed
@@ -108,6 +111,20 @@ def recipe(value, builder, *, where: str):
                    f"rebuilt by the experience. Pass instead: an object loaded with "
                    f"useml.config.load(name, **overrides), a processed dataset "
                    f"useml.data.load(name), the output of a step, or plain values.")
+
+
+def _dataset_recipe(value, where):
+    import sys
+
+    module = sys.modules.get("useml.datasets._dataset")
+    if module is None or not isinstance(value, module.Dataset):
+        return None
+    spec = value.spec()
+    if spec is None:
+        raise RefError(f"{where}: a filtered dataset cannot be rebuilt in another process "
+                       f"(a filter is a function). Declare it as a split of the driver, or "
+                       f"filter inside the step.")
+    return {"$dataset": {**spec, "fingerprint": value.fingerprint, "records": len(value)}}
 
 
 def _processed_recipe(value, where):
@@ -234,6 +251,10 @@ def rebuild(value, outputs):
 
             spec = value["$output"]
             return open_experience(spec["experience"]).get(spec["step"])
+        if set(value) == {"$dataset"}:
+            from .. import datasets
+
+            return datasets.from_spec(value["$dataset"])
         if set(value) == {"$path"}:
             return Path(value["$path"])
         return {key: rebuild(item, outputs) for key, item in value.items()}

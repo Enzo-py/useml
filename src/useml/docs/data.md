@@ -60,6 +60,7 @@ Sources:
 | `data.images("/data/photos")` (folder, glob or list of paths) | hash of the file bytes (`key="stat"`: path + size + mtime, no read) |
 | `data.texts(captions)` | hash of the text |
 | `data.items(objects, key=lambda o: o.id)` | your key |
+| `datasets.load("captions", "train").field("image")` | per the driver's `key` (see [datasets.md](datasets.md)) |
 | `data.source("my_project.datasets:build", split="train")` | whatever the function returns |
 
 What `process` does:

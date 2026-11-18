@@ -29,13 +29,13 @@ if _os.environ.get("USEML_NO_AUTO", "").strip() not in ("1", "true", "yes"):
     paths.apply()
     hub.apply_configured_policy()
 
-__all__ = ["paths", "hub", "store", "data", "config", "exp", "__version__"]
+__all__ = ["paths", "hub", "store", "data", "datasets", "config", "exp", "__version__"]
 
 
 def __getattr__(name):
     """`useml.data` and `useml.config` are imported on first use: they need numpy / PyYAML,
     `import useml` does not."""
-    if name in ("data", "config", "exp"):
+    if name in ("data", "datasets", "config", "exp"):
         import importlib
 
         return importlib.import_module(f".{name}", __name__)

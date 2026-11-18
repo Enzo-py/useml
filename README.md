@@ -21,7 +21,7 @@ package (`useml docs <topic>`):
 
 - [Quickstart](src/useml/docs/quickstart.md) · [Adopt useml in a project](src/useml/docs/adopt.md)
 - [Caches and downloads](src/useml/docs/paths-and-hub.md) · [Cache store](src/useml/docs/store.md)
-  · [Processed data](src/useml/docs/data.md) · [Configs](src/useml/docs/config.md)
+  · [Datasets](src/useml/docs/datasets.md) · [Processed data](src/useml/docs/data.md) · [Configs](src/useml/docs/config.md)
   · [Experiences](src/useml/docs/exp.md)
 - [Troubleshooting](src/useml/docs/troubleshooting.md) · [Reference](src/useml/docs/reference.md)
   · [FAQ](src/useml/docs/faq.md)
@@ -74,6 +74,27 @@ By default, only one thread may download at a time, in every library:
   and kills it on a sustained violation.
 
 `useml.hub.allow_parallel()` lifts it, explicitly.
+
+## Datasets declared once
+
+```python
+from useml import datasets as ds
+
+@ds.register
+class Captions(ds.Driver):
+    name = "captions"
+    sources = [ds.Source("https://example.org/captions.zip", extract=True)]
+    files = [ds.Files("annotations.csv", columns={"id": "image_id", "text": "caption",
+                                                   "image": "file"}, paths={"image": "images"})]
+    hash_splits = {"train": 0.8, "test": 0.2}
+    key = "image"
+
+train = ds.load("captions", "train")          # downloads, indexes and checks on first use
+train[0]                                       # {"id": ..., "text": ..., "image": Path(...)}
+```
+
+Missing columns fail at preparation with the closest names; the index rebuilds itself when
+the driver or its files change; splits are native or a stable salted hash.
 
 ## One cache store
 

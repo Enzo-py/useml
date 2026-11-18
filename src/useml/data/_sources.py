@@ -215,4 +215,8 @@ def from_spec(spec: dict) -> Source:
         return Texts(spec["values"], name=spec["name"])
     if kind == "factory":
         return FromFactory(spec["target"], spec["kwargs"], name=spec["name"])
+    if kind == "dataset":
+        from ..datasets import from_spec as dataset_from_spec
+
+        return dataset_from_spec(spec)
     raise ValueError(f"unknown source kind {kind!r}")
