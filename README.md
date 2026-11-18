@@ -1,454 +1,204 @@
 # useml
 
-**Stop coding plumbing, start training models.**
-
-`useml` is a minimalist ML experiment versioning framework for PyTorch. It handles checkpointing, source archiving, and model isolation so you can focus on the architecture.
-
-## Installation
+One root for every ML cache, one gate for every download.
 
 ```bash
-pip install useml
+pip install "useml[all]"
 ```
 
-## Core concepts
+## Quick start
 
-```
-vault/
-└── my-experiment/          ← project
-    ├── versions.yaml       ← model version index
-    ├── snap_20240501_.../  ← snapshot (one per checkpoint)
-    │   ├── weights/        ← model .pth files
-    │   ├── optimizers/     ← optimizer states (for resume)
-    │   ├── configs/        ← per-component YAML configs
-    │   ├── source/         ← archived source code
-    │   ├── manifest.yaml   ← component registry
-    │   └── metadata.yaml   ← message + metrics
-    └── snap_20240502_.../
+```bash
+pip install "useml[all]"
+cd my-project
+useml init            # shows what it would set up (adds, never overwrites); confirm to write
+useml check           # checks that everything resolves
 ```
 
-## Basic usage
+## One root per machine
+
+```toml
+# ~/.config/useml/config.toml
+root = "/data/me/useml"
+
+[hub]
+parallel = false        # default: one download thread at a time
+```
+
+`import useml` (first, before torch / transformers) points `HF_HOME`, `TORCH_HOME`,
+`TMPDIR`, pip, triton… under the root. A cache already placed outside the home is never
+moved. `useml paths` shows where everything goes.
+
+## One gate for downloads
 
 ```python
 import useml
-from useml import Config
 
-useml.init("vault")
-project = useml.new("mnist-cnn")      # returns a Project
-# or: project = useml.focus("mnist-cnn")  to reopen existing
+useml.hub.get("hf://openai/clip-vit-large-patch14")
+useml.hub.get("hf://datasets/org/name@main/file.json")
+useml.hub.get("https://example.org/annotations.zip", extract_archive=True)
+useml.hub.get("gdrive://<file id>")
 ```
 
-`useml.*` only exposes setup (`init` / `new` / `focus`) and the core classes
-(`Config`, `Model`, `Loss`, `DataBundle`). Everything else — training, loading,
-comparing — lives on the **project**.
+Already downloaded → answered from disk, no network. Every download is recorded:
 
----
+```bash
+useml hub ls            # what is on disk, how big, last used
+useml hub scan          # caches left in the home (~/.cache/huggingface…)
+useml hub scan --move --apply
+```
 
-## Level-0 — train in two lines
+## The network policy
+
+By default, only one thread may download at a time, in every library:
+
+- Hugging Face `xet` (Rust, its own parallel connections) is disabled;
+- the thread pools of `huggingface_hub` and `datasets` become sequential;
+- `socket.connect` refuses an outbound connection from a second thread
+  (`ParallelDownloadError`), and logs it;
+- `useml hub watch -- python train.py` watches the whole process tree from outside
+  and kills it on a sustained violation.
+
+`useml.hub.allow_parallel()` lifts it, explicitly.
+
+## One cache store
 
 ```python
-from useml import Config
-
-config = Config(
-    epochs=10,
-    lr=1e-3,
-    loss="cross_entropy",
-    checkpoint_strategy="best",
-)
-
-run = project.runs.new(ConvNet, "mnist", config=config)
-history = run.train()
+store = useml.store.open()                       # <root>/store
+masks = store.declare("processing/masks", cost="expensive")
+masks.put({"image": digest, "model": "sam-h"}, {"masks": array})
+masks.get({"image": digest, "model": "sam-h"})
 ```
 
-Built-in dataset strings: `"mnist"`, `"fashion_mnist"`, `"cifar10"`, `"cifar100"`,
-`"hf:<dataset_name>"` (HuggingFace), or any `torch.utils.data.Dataset`.
+One SQLite index (WAL, safe across processes), large values in files written atomically,
+one write per key. Spaces are declared with a cost (`cheap`, `expensive`, `precious`)
+kept in the index, so cleaning needs no project code:
 
-### Pass your own loaders
+```bash
+useml store spaces
+useml store gc --max-size 450GB            # dry run: cheapest to recompute first
+useml store gc --max-size 450GB --apply
+```
+
+`[store] max_size = "450GB"` in the config sets the default budget. Nothing is ever
+evicted automatically, pinned entries and `precious` spaces are kept.
+
+## Data processed once
 
 ```python
-run = project.runs.new(ConvNet, config=config)
-history = run.train(train_loader, val_loader)
+from useml import data
+
+@data.processor("clip-image", version=1, batch_size=64, dtype="float16")
+class ClipImage:
+    def __init__(self, model="openai/clip-vit-base-patch32", device="cuda"): ...
+    def load(self, path): ...             # per item, in worker threads
+    def __call__(self, images): ...       # a batch → (B, D) array, or a dict of arrays
+
+data.process(data.images("/data/photos"), ClipImage, name="photos-clip")
+feats = data.load("photos-clip")            # one line; nothing is read until used
+feats[0], feats[100:200], feats.numpy()
 ```
 
-### Custom step function
+- One table per (processor, version, parameters, dtype), shared by every dataset: rows
+  are found by a hash of their CONTENT, so an image two datasets share is computed once.
+- Only missing rows are computed; when nothing is missing, the model is never loaded.
+- Storage `float16` (default), `float32` or `int8` (one byte per number + a scale per row).
+- Memory-mapped, append-only shards; one writer per table (a file lock); an interrupted
+  run keeps its rows and resumes.
+- The size to write is checked against the free disk and `[data] max_size` before writing.
+- `process(..., detach=True)` runs in its own process: `job.follow()`, `useml data jobs`.
+- Anything longer than ~2 s shows a tqdm bar or a "⏳ … / ✓ … (12.3s)" line.
 
-Override the default `criterion(model(x), y)` without subclassing:
-
-```python
-def ae_step(model, batch, device):
-    x, _ = batch
-    return F.mse_loss(model(x.to(device)), x.to(device))   # target = input
-
-run = project.runs.new(AutoEncoder, "mnist", config=config)
-history = run.train(step_fn=ae_step)
+```bash
+useml data ls          # named datasets
+useml data tables      # tables, size, who uses them
+useml data rm photos-clip --table
 ```
 
----
+## Configs in YAML, objects in one line
 
-## Inspecting results
-
-```python
-project.show()
-# --- Project: mnist-cnn ---
-# Runs:    5
-# Models:  convnet(5)
-# Latest:  epoch 10 [snap_20240502_...]
-
-# Leaderboard
-print(project.runs.leaderboard("val_loss"))
-
-# Best model
-best = project.models["convnet"].best("val_loss")
-model = best.load()
-print(best.metrics)   # {"val_loss": 0.07, "epoch": 8}
+```toml
+# pyproject.toml of your project
+[tool.useml.config]
+root = "configs"                          # configs/models/*.yaml, configs/scorers/*.yaml
+packages = ["mypkg.models"]               # where `type:` names are looked up (no imports by string)
 ```
-
----
-
-## Model registry
-
-After training, each saved checkpoint becomes a versioned model entry:
-
-```python
-reg = project.models["convnet"]   # ModelRegistry
-
-reg["v1"].load()                  # load specific version
-reg["v1"].metrics                 # {"val_loss": 0.12, "epoch": 5}
-reg["v1"].config                  # {"lr": 0.001, "epochs": 10, ...}
-
-reg.latest.load()                 # most recent checkpoint
-reg.best("val_loss").load()       # best by metric (min by default)
-reg.best("accuracy", mode="max")  # best by metric (max)
-
-for v in reg:
-    print(v.label, v.metrics)
-```
-
----
-
-## Runs view
-
-```python
-runs = project.runs
-
-runs.latest                          # most recent RunRecord
-runs.best("val_loss")                # best run by metric
-list(runs)                           # all RunRecords, newest first
-runs.filter(model="convnet")         # filter by component name
-runs.leaderboard("val_loss", top=5)  # formatted table (str)
-```
-
-Each `RunRecord` lets you reload a model:
-
-```python
-record = project.runs.latest
-model = record.load()               # single-model run → no name needed
-model = record.load("encoder", model=Encoder())
-```
-
----
-
-## Config
-
-`Config` accepts standard fields plus any custom keyword argument.
-Custom fields are serialised to the snapshot YAML and forwarded to the model
-constructor by `ModelVersion.load()`.
-
-```python
-config = Config(
-    epochs=30,
-    lr=1e-3,
-    optimizer="adam",           # "adam" | "adamw" | "sgd"
-    loss="cross_entropy",       # str | nn.Module class/instance | callable
-    batch_size=128,
-    val_split=0.1,
-    seed=42,
-    checkpoint_strategy="best", # "every_n" (default) | "best" | "last"
-    checkpoint_metric="val_loss",
-    checkpoint_mode="min",
-    checkpoint_every=5,         # used when strategy="every_n"
-    early_stop_patience=10,
-    device="auto",              # "auto" | "cpu" | "cuda" | "mps"
-    # Custom fields — stored in YAML and injected into model constructor:
-    latent_dim=16,
-    kl_weight=1e-3,
-)
-
-config.latent_dim   # 16
-config.to_dict()    # all fields including custom ones
-```
-
-On reload, `useml` reads the snapshot YAML and calls `Model(latent_dim=16)`
-automatically — no hardcoded defaults needed:
-
-```python
-model = project.models["vae"]["v1"].load()   # VAE(latent_dim=16) auto-injected
-```
-
----
-
-## Level-2 — scheduler, metrics, checkpoint strategies
-
-### LR scheduler
-
-```python
-from torch.optim.lr_scheduler import CosineAnnealingLR
-
-run = project.runs.new(Net, dataset, config=config)
-run.scheduler = CosineAnnealingLR(run.optimizer, T_max=config.epochs)
-history = run.train()
-```
-
-Or pass a factory to `train()`:
-
-```python
-history = run.train(
-    scheduler=lambda opt: CosineAnnealingLR(opt, T_max=config.epochs)
-)
-```
-
-`ReduceLROnPlateau` is detected and receives the monitored metric automatically.
-Set `run.scheduler_per_batch = True` for per-batch schedulers (`OneCycleLR`).
-
-### Custom metrics
-
-```python
-def accuracy(model, batch, device):
-    x, y = batch
-    return (model(x.to(device)).argmax(-1) == y.to(device)).float().mean()
-
-history = run.train(metrics={"accuracy": accuracy})
-# history keys: train_loss, val_loss, train_accuracy, val_accuracy
-```
-
-Metrics are embedded in every checkpoint's `metadata.yaml`:
 
 ```yaml
-metrics:
-  val_loss: 0.07
-  val_accuracy: 0.94
-  epoch: 8
+# configs/models/resnet_ft.yaml
+meta: {display_name: ResNet-50 (fine-tuned)}
+type: Classifier
+backbone: {ref: resnet50}                      # another config, built once and shared
+optimizer: {type: SGD, lr: 0.01}
 ```
-
-### Best-val checkpointing
 
 ```python
-config = Config(
-    checkpoint_strategy="best",
-    checkpoint_metric="accuracy",
-    checkpoint_mode="max",
-)
+from useml import config
+model = config.load("resnet_ft")                                  # memoised by name
+model = config.load("resnet_ft", optimizer={"lr": 0.1}) # one setting, merged
+model.config.hash, model.config.provenance()                    # cite what ran
+config.create("variant", model); config.diff("resnet_ft", model)   # and back to a file
 ```
 
-`"last"` writes a single snapshot at the very end of training.
+Misspelled keys and types raise with the closest name and the place in the file.
 
-### Early stopping
+## Experiences, and their outputs in one line
 
 ```python
-config = Config(
-    early_stop_patience=5,
-    early_stop_metric="val_loss",
-    early_stop_mode="min",
-)
+from useml import exp, config, data
+
+with exp.experience("vision/baseline") as e:          # nothing runs in the block
+    trained = e.step(train, data.load("photos-clip"), config.load("classifier"),
+                     epochs=10, name="model")
+    e.step(report, trained, name="report")
+# block end: declaration written, run detached, followed with a progress bar
+
+model = exp.get("vision/baseline/model")             # later, anywhere: the trained model
+exp.open("vision/baseline").results()                 # every step's numbers
 ```
 
----
+- A step is an importable function. Arguments are recipes: outputs of earlier steps,
+  `config.load(...)` objects, `data.load(name)` datasets, outputs of other experiences.
+- Fingerprints chain: running the block again skips what is done; changing a line reruns
+  only what depends on it. An interrupted run resumes.
+- Outputs are saved by type: a model built from a config is kept as config + weights and
+  comes back rebuilt; arrays as `.npz`; figures as `.png`; numbers as JSON.
+- A step with a `ctx` parameter gets its folder, `ctx.progress(i, n)`, `ctx.checkpoints`
+  and `ctx.should_stop()`.
 
-## Level-2 — Pattern B (custom training loop)
-
-For GANs, diffusion, multi-optimizer setups — anything that doesn't fit
-the standard supervised loop:
-
-```python
-config = Config(
-    epochs=50,
-    checkpoint_strategy="best",
-    checkpoint_metric="g_loss",
-    checkpoint_mode="min",
-)
-
-run = project.runs.new(config=config)     # no model yet
-run.register("G", Generator(), optimizer=opt_G)
-run.register("D", Discriminator(), optimizer=opt_D)
-
-for epoch in run.epochs(config.epochs):
-    for batch in loader:
-        # your adversarial step here
-        g_loss = ...
-        d_loss = ...
-        run.update(n=batch_size, g_loss=g_loss, d_loss=d_loss)
-    run.epoch_end(epoch)   # aggregate + log + checkpoint G and D atomically
+```bash
+useml exp ls
+useml exp show vision/baseline
+useml exp follow vision/baseline
+useml exp stop vision/baseline
 ```
 
-`register()` returns `self` for chaining. All registered models are always
-committed **atomically** — no risk of G and D from different epochs.
+### Runs that survive, crashes that explain themselves
 
-### on_epoch_end hook
+A detached run lives in a tmux session (`useml exp attach <name>`), or in its own session
+without tmux: closing the laptop, the SSH connection or the notebook does not stop it.
+A small supervisor process is its parent and records how it ended — exit code, signal
+(SIGKILL ≈ out of RAM, SIGSEGV = native crash), peak RAM, kernel OOM lines, traceback,
+last log lines:
 
-```python
-class MyRun(Run):
-    def on_epoch_end(self, epoch, train_metrics, val_metrics):
-        if epoch % 10 == 0:
-            self.scheduler.base_lrs = [lr * 0.5 for lr in self.scheduler.base_lrs]
+```bash
+useml exp why vision/baseline     # where it is, or why it died
+useml exp stack vision/baseline   # the Python stack of a run that seems stuck
 ```
 
----
-
-## Training resume
-
-```python
-# Pattern A
-run = project.runs.new(Net, dataset, config=Config(epochs=20))
-history = run.train(resume_from="\\latest")   # continues from saved epoch
-
-# Pattern B
-run = project.runs.new(config=config)
-run.register("G", Generator(), optimizer=opt_G)
-run.resume("\\latest")                         # loads weights + optimizer state
-
-for epoch in run.epochs(config.epochs):        # starts from saved_epoch + 1
-    ...
+```toml
+# ~/.config/useml/config.toml — optional: be told when a run ends or crashes
+[exp]
+notify = "your-command $USEML_EXP_NAME $USEML_EXP_STATUS"
 ```
 
----
+### Bundles: archive the version that worked
 
-## Level-1 — DataBundle (versioned data contracts)
-
-`DataBundle` pairs a dataset with a preprocessing transform and hashes both.
-The transform source code is archived verbatim in every snapshot.
-
-```python
-from useml import DataBundle
-
-bundle = DataBundle(
-    name="polar_clouds",
-    source=CartesianDataset(),      # raw data — any Dataset or built-in name
-    transform=gridify,              # per-sample callable: sample -> sample
-    version="v1",
-    cache=True,                     # materialise on first run, reload after
-)
-
-run = project.runs.new(MyCNN, bundle, config=config)
-history = run.train()
+```bash
+useml exp bundle vision/baseline -o archive/baseline-final [--archive]
 ```
 
-Three hashes are recorded in `metadata.yaml`:
-
-| Hash | What it tracks |
-|---|---|
-| `source_hash` | Fingerprint of the raw dataset |
-| `transform_hash` | sha256 of the transform function source + name |
-| `cache_key` | sha256(source_hash + transform_hash) |
-
-### Factory transforms
-
-```python
-def make_gridify(n_r, n_t):
-    def gridify(sample): ...
-    gridify.__name__ = f"gridify_{n_r}r_{n_t}t"
-    return gridify
-
-bundle_fine   = DataBundle("ds", raw, transform=make_gridify(16, 32))
-bundle_coarse = DataBundle("ds", raw, transform=make_gridify(8, 16))
-# → different transform_hash, different archived .py file
-```
-
----
-
-## Code isolation (workdir)
-
-```python
-from useml.session.manager import _session
-
-_session.mount("\\latest")
-
-from useml.workdir import mymodel   # loads archived source from snapshot
-model = mymodel.MyModel()           # uses the code version from the checkpoint
-
-_session.mount("\\workdir")         # unmount, back to live code
-```
-
-Snapshot tags:
-
-| Tag | Meaning |
-|---|---|
-| `\latest` | Most recent snapshot |
-| `\head~N` | N snapshots before latest |
-| `\workdir` / `\current` | Unmount |
-| `snap_20240501_...` | Exact folder name |
-
----
-
-## Custom loss
-
-```python
-Config(loss="cross_entropy")          # built-in: "cross_entropy", "mse", "bce", "l1"
-Config(loss=nn.HuberLoss)             # class
-Config(loss=nn.HuberLoss(delta=0.5))  # instance
-Config(loss=focal_loss)               # callable — source archived automatically
-```
-
----
-
-## Error codes
-
-All exceptions carry a `[UML-NNN]` code. See [ERRORS.md](ERRORS.md) for the
-full catalog with causes and fixes.
-
----
-
-## API reference
-
-### Setup
-
-| | |
-|---|---|
-| `useml.init(vault_path)` | Connect to a vault directory |
-| `useml.new(name)` → `Project` | Create a new project |
-| `useml.focus(name)` → `Project` | Open an existing project |
-
-### Project
-
-| | |
-|---|---|
-| `project.runs` | `RunsView` — all runs, factory for new ones |
-| `project.models` | `ModelsView` — versioned model registry |
-| `project.log()` | List of snapshots, newest first |
-| `project.show()` | Print project summary |
-
-### RunsView / Run
-
-| | |
-|---|---|
-| `project.runs.new(Model, dataset?, config=, name=)` | Create a training run |
-| `run.train(loaders?, step_fn?, metrics?, scheduler?, resume_from?)` | Run Pattern A |
-| `run.register(name, model, optimizer?)` | Register a model (Pattern B) |
-| `run.epochs(n)` | Epoch iterator (Pattern B) |
-| `run.update(n=, **metrics)` | Accumulate batch metrics (Pattern B) |
-| `run.epoch_end(epoch)` | Aggregate + checkpoint (Pattern B) |
-| `run.resume(tag)` | Load weights + optimizer states |
-| `project.runs.latest` | Most recent `RunRecord` |
-| `project.runs.best(metric, mode=)` | Best `RunRecord` |
-| `project.runs.filter(model=)` | Filtered `RunsView` |
-| `project.runs.leaderboard(metric, top=)` | Formatted table (str) |
-
-### ModelsView / ModelRegistry / ModelVersion
-
-| | |
-|---|---|
-| `project.models["name"]` | `ModelRegistry` for one component |
-| `registry.latest` | Most recent `ModelVersion` |
-| `registry.best(metric, mode=)` | Best `ModelVersion` |
-| `registry["v1"]` | Specific version |
-| `version.load(model=None)` | Restore weights (auto-instantiate if omitted) |
-| `version.metrics` | `{"val_loss": 0.07, "epoch": 8, ...}` |
-| `version.config` | Config dict from snapshot YAML |
-
-### DataBundle
-
-| | |
-|---|---|
-| `DataBundle(name, source, transform=, version=, cache=)` | Create a data contract |
-| `bundle.source_hash()` | Raw dataset fingerprint |
-| `bundle.transform_hash()` | Transform source hash |
-| `bundle.cache_key()` | Combined hash |
-| `bundle.to_meta_dict()` | Dict for snapshot `metadata.yaml` |
+A standalone folder: the code exactly as it ran (commit + uncommitted diff + untracked
+sources, recorded at every launch), a copy of useml, the configs, every step's output,
+the rows of the datasets it read, `packages.txt`, and sha256 checksums. `python load.py`
+/ `from load import get` reads an output; `python run.py --from-scratch` recomputes it.
