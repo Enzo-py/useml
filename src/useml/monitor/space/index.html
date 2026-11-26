@@ -1031,7 +1031,7 @@ function toast(message, command) {
   const node = $("toast");
   node.replaceChildren(el("div", {class: "row"}, el("div", {}, message),
     el("button", {class: "icon-btn", "aria-label": "Close", onclick: () => { node.hidden = true; }}, svgIcon("M6 6l12 12M18 6L6 18"))),
-    command ? commandLine(command) : null);
+    ...(command ? [commandLine(command)] : []));
   node.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { node.hidden = true; }, 15000);
 }
@@ -1072,10 +1072,14 @@ function viewHash() {
   if (view.kind === "method") return `#/projects/${encodeURIComponent(view.name)}/${encodeURIComponent(view.method)}`;
   return "#/";
 }
+let projectLoading = null;                          // {name, promise}: one request at a time
 async function loadProject(name) {
-  projectPage = await call(`api/project?name=${encodeURIComponent(name)}`);
-  projectsLoaded = Date.now();
-  return projectPage;
+  if (projectLoading && projectLoading.name === name) return projectLoading.promise;
+  const promise = call(`api/project?name=${encodeURIComponent(name)}`).then((page) => {
+    projectPage = page; projectsLoaded = Date.now(); return page;
+  }).finally(() => { if (projectLoading && projectLoading.promise === promise) projectLoading = null; });
+  projectLoading = {name, promise};
+  return promise;
 }
 async function loadProjectsView() {
   try {
@@ -1184,9 +1188,9 @@ function renderProjectList(root) {
   if (!list.length) {
     root.replaceChildren(head, el("div", {class: "card onboard"},
       el("h3", {}, "Declare a project"),
-      el("div", {class: "muted small"}, "In the repository's useml.toml (or [tool.useml.project] in pyproject.toml):"),
-      el("pre", {}, '[project]\nname = "robust-vision"\ndescription = "Classifiers that survive corrupted inputs."\nfocus = "wide"\n\n[project.methods.wide]\ndescription = "Wider blocks, same budget."'),
-      el("div", {class: "muted small"}, "Then: exp.experience(name, method=\"wide\"). Every machine running this repository reports to the same project."),
+      el("div", {class: "muted small"}, "In the repository, useml proposes one from the experiences that exist (a method per group of names, the datasets they read, the focus); --yes writes it:"),
+      commandLine("useml project init"),
+      el("div", {class: "muted small"}, "Then change it with commands: useml project describe, focus, method add, dataset add. Every machine running this repository reports to the same project."),
       commandLine("useml docs projects")));
     return;
   }
@@ -1284,7 +1288,7 @@ function renderMethod(root) {
     declared.description ? el("p", {class: "lead"}, declared.description) : null,
     el("div", {class: "toolbar"}, primarySelect(project, all), el("div", {class: "spacer"}),
       view.method !== project.focus && view.method !== "(unassigned)" ? el("button", {class: "btn small", onclick: () =>
-        toast(`To work on “${view.method}”, set it as the focus in the repository's useml.toml:`, `focus = ${JSON.stringify(view.method)}`)}, "Set as focus") : null)];
+        toast(`To work on “${view.method}”, run in the repository:`, `useml project focus ${view.method}`)}, "Set as focus") : null)];
   if (!runs.length) out.push(el("div", {class: "card empty-now"}, "No run of this method yet. ",
     el("a", {href: `#/new/${encodeURIComponent(project.name)}/method`}, "How to start one")));
   else {
@@ -1569,26 +1573,27 @@ function renderComposer() {
   const field = (label, placeholder, value = "") => { const input = el("input", {placeholder, autocomplete: "off"}); input.value = value; return [el("label", {}, label, input), input]; };
   const output = el("div");
   const out = [];
-  const toml = (text) => el("div", {}, el("div", {class: "small muted", style: {margin: "10px 0 4px"}}, "Add to useml.toml (in pyproject.toml, prefix the table with tool.useml.):"), codeBlock(text));
+  const run = (command) => el("div", {}, el("div", {class: "small muted", style: {margin: "10px 0 4px"}}, "Run in the repository, on any machine:"), commandLine(command));
   if (route.what === "method") {
     const [l1, name] = field("Name", "wide"), [l2, description] = field("What it tries", "Wider blocks, same budget"),
-          [l3, status] = field("Status", "idea, active, reference…", "idea"), [l4, globs] = field("Its experiences (glob, optional)", "vision/wide*");
+          [l3, status] = field("Status", "idea, active, reference…", "idea"), [l4, globs] = field("Its experiences (glob, optional)", "wide/*");
     const compose = () => {
       const n = name.value.trim() || "my-method";
-      const lines = [`[project.methods.${/^[A-Za-z0-9_-]+$/.test(n) ? n : JSON.stringify(n)}]`, `description = ${JSON.stringify(description.value.trim())}`];
-      if (status.value.trim()) lines.push(`status = ${JSON.stringify(status.value.trim())}`);
-      if (globs.value.trim()) lines.push(`experiences = [${globs.value.split(",").map((g) => JSON.stringify(g.trim())).join(", ")}]`);
-      output.replaceChildren(toml(lines.join("\n")),
+      const parts = ["useml project method add", n];
+      if (description.value.trim()) parts.push("-d", quote(description.value.trim()));
+      if (status.value.trim()) parts.push("-s", quote(status.value.trim()));
+      if (globs.value.trim()) parts.push("-e", ...globs.value.split(",").map((g) => quote(g.trim())).filter((g) => g !== "''"));
+      output.replaceChildren(...[run(parts.join(" ")),
+        /^[A-Za-z0-9_-]+$/.test(n) ? null : el("div", {class: "small", style: {color: "var(--bad)"}}, "A name uses letters, digits, - and _ only."),
         el("div", {class: "small muted", style: {margin: "10px 0 4px"}}, "Then declare its experiences with the method (or match the glob):"),
-        codeBlock(`from useml import exp\n\nwith exp.experience(${JSON.stringify(`${n}/first`)}, method=${JSON.stringify(n)}) as e:\n    ...`));
+        codeBlock(`from useml import exp\n\nwith exp.experience(${JSON.stringify(`${n}/first`)}, method=${JSON.stringify(n)}) as e:\n    ...`)].filter(Boolean));
     };
     [name, description, status, globs].forEach((i) => i.addEventListener("input", compose)); compose();
     out.push(block("A new method", el("div", {class: "editor"}, l1, l3), el("div", {class: "editor", style: {marginTop: "10px"}}, l2, l4), output));
   } else if (route.what === "dataset") {
     const [l1, name] = field("Name of its driver", "cifar10-c");
     const compose = () => {
-      const list = [...new Set([...(project.datasets || []), name.value.trim() || "my-dataset"])];
-      output.replaceChildren(toml(`[project]\ndatasets = [${list.map((d) => JSON.stringify(d)).join(", ")}]`),
+      output.replaceChildren(run(`useml project dataset add ${name.value.trim() || "my-dataset"}`),
         el("div", {class: "small muted", style: {margin: "10px 0 4px"}}, "A dataset is loaded by its driver; to write one:"), commandLine("useml docs datasets"));
     };
     name.addEventListener("input", compose); compose();
@@ -1596,10 +1601,11 @@ function renderComposer() {
   } else {
     const select = el("select", {class: "select"}, methodsOf(project, pageRuns()).filter((m) => m !== "(unassigned)").map((m) =>
       el("option", {value: m, selected: m === project.focus ? "selected" : null}, m)));
-    const compose = () => output.replaceChildren(toml(`[project]\nfocus = ${JSON.stringify(select.value)}`));
+    const compose = () => output.replaceChildren(run(`useml project focus ${select.value}`));
     select.addEventListener("change", compose); compose();
     out.push(block("The method you work on", el("label", {class: "inline-label"}, "focus", select), output));
   }
+  out.push(el("div", {class: "small muted"}, "From what exists: ", el("code", {}, "useml project init"), " proposes a method for each group of experience names, the datasets they read and the focus."));
   out.push(el("div", {class: "tiny muted"}, "The project lives in the repository: commit the change, and every machine running it reports it at its next snapshot."));
   body.replaceChildren(...out);
 }

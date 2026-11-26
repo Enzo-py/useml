@@ -186,3 +186,87 @@ def test_proposed_alternative_runs_as_is(project):
     exec(compile(code, "<alternative>", "exec"), {})
     record = projects.record(exp.open("vision/base-c"))
     assert record["status"] == "done" and record["factors"]["train.steps"] == 6
+
+
+# ── managing the declaration from what exists ─────────────────────────────────
+
+@pytest.fixture
+def bare(tmp_path, monkeypatch):
+    """A repository with experiences but no [project] yet (settings in pyproject.toml)."""
+    folder = tmp_path / "repo"
+    folder.mkdir()
+    (folder / "pyproject.toml").write_text(
+        '# keep me\n[project]\nname = "pkg"\n\n[tool.useml.exp]\nroot = "experiences"  # mine\n')
+    monkeypatch.chdir(folder)
+    monkeypatch.setenv("USEML_NO_AUTO", "1")
+    monkeypatch.setenv("USEML_NO_TMUX", "1")
+    monkeypatch.setenv("USEML_ROOT", str(tmp_path / "root"))
+    monkeypatch.setenv("USEML_CONFIG", str(tmp_path / "machine.toml"))
+    monkeypatch.setenv("PYTHONPATH", str(TESTS) + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    monkeypatch.setattr(config, "_DEFAULT", None)
+    return folder
+
+
+def test_init_proposes_from_what_exists_then_writes_only_additions(bare):
+    run("vision/a", 4)
+    run("vision/b", 8)
+    run("ideas/x", 2, method="probe")
+    run("loose", 2)
+    plan = projects.propose()
+    assert plan["file"].endswith("pyproject.toml") and plan["prefix"] == "tool.useml."
+    assert plan["name"] == "repo" and plan["focus"] == "probe"               # changed last
+    assert plan["methods"]["vision"] == {"experiences": ["vision/*"], "count": 2}
+    assert plan["methods"]["probe"] == {"experiences": [], "count": 1}       # declared in code
+    assert plan["unassigned"] == ["loose"]
+    assert "[tool.useml.project.methods.vision]" in projects.proposal_text(plan)
+    projects.init()
+    text = (bare / "pyproject.toml").read_text()
+    assert text.startswith('# keep me\n[project]\nname = "pkg"') and 'root = "experiences"  # mine' in text
+    declared = projects.declared()
+    assert declared["name"] == "repo" and set(declared["methods"]) == {"vision", "probe"}
+    assert projects.proposal_text(projects.propose()) == ""                   # nothing left
+
+
+def test_editing_commands_keep_the_file(bare, capsys):
+    from useml.cli import main
+
+    run("vision/a", 4)
+    assert main(["project", "init", "--yes"]) == 0
+    assert main(["project", "describe", "Robust classifiers"]) == 0
+    assert main(["project", "method", "add", "wide", "-d", "Wider", "-s", "idea", "-e", "wide/*"]) == 0
+    assert main(["project", "method", "add", "wide"]) == 2                    # exists
+    assert main(["project", "method", "set", "wide", "-s", "active"]) == 0
+    assert main(["project", "focus", "wide"]) == 0
+    assert main(["project", "focus", "nope"]) == 2
+    assert main(["project", "dataset", "add", "cifar10", "svhn"]) == 0
+    assert main(["project", "dataset", "rm", "svhn"]) == 0
+    declared = projects.declared()
+    assert declared["description"] == "Robust classifiers" and declared["focus"] == "wide"
+    assert declared["methods"]["wide"] == {"description": "Wider", "status": "active",
+                                           "experiences": ["wide/*"]}
+    assert declared["datasets"] == ["cifar10"]
+    assert main(["project", "method", "rm", "wide"]) == 0
+    declared = projects.declared()
+    assert "wide" not in declared["methods"] and declared["focus"] is None   # focus cleared
+    assert "vision" in declared["methods"]
+    text = (bare / "pyproject.toml").read_text()
+    assert text.startswith("# keep me") and (bare / "pyproject.toml.bak").exists()
+    assert "useml project: no method 'nope'" in capsys.readouterr().err
+
+
+def test_a_new_useml_toml_when_nothing_declares_useml(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    path, prefix = projects.project_file()
+    assert path == tmp_path.resolve() / "useml.toml" and prefix == ""
+    projects.add_method("first", description="a start")
+    assert projects.declared()["methods"]["first"]["description"] == "a start"
+
+
+def test_remove_table_keeps_its_neighbours(tmp_path):
+    from useml import _settings
+
+    path = tmp_path / "x.toml"
+    path.write_text('[a]\nk = 1\n\n# about b\n[b]\nk = 2\n\n# about c\n[c]\nk = 3\n')
+    assert _settings.remove_table(path, "b") is True
+    assert path.read_text() == '[a]\nk = 1\n\n# about c\n[c]\nk = 3\n'
+    assert _settings.remove_table(path, "nope") is False

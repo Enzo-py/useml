@@ -184,23 +184,13 @@ def edit(key: str, value=None, *, remove: bool = False, path: Path | None = None
     from . import paths
 
     describe_key(key)
-    path = Path(path or paths.config_path())
-    original = path.read_text() if path.exists() else ""
-    lines = original.splitlines()
     table, name = _split(key)
-    span, insert_at, table_found = _locate(lines, table, name)
-    new_line = f"{name} = {format_value(value)}" if not remove else None
-    if span is not None:
-        lines[span[0]:span[1]] = [new_line] if new_line else []
-    elif remove:
-        return path                                      # nothing to remove
-    elif table_found or table == "":
-        lines.insert(insert_at or 0, new_line)
-    else:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines += [f"[{table}]", new_line]
-    text = "\n".join(lines) + "\n"
+    return edit_file(Path(path or paths.config_path()), table, name, value, remove=remove)
+
+
+def _write_checked(path: Path, lines: list[str]) -> Path:
+    """Parse the result, keep the previous file as `<name>.bak`, replace atomically."""
+    text = "\n".join(lines).rstrip("\n") + "\n" if lines else ""
     try:
         _toml_loads(text)
     except Exception as error:                           # noqa: BLE001
@@ -213,6 +203,56 @@ def edit(key: str, value=None, *, remove: bool = False, path: Path | None = None
     temporary.write_text(text)
     os.replace(temporary, path)
     return path
+
+
+def edit_file(path: Path, table: str, name: str, value=None, *, remove: bool = False) -> Path:
+    """Set (or remove) `name` in `[table]` of any TOML file (`table` = "" for the top),
+    line by line: comments, order and other tables are kept; the table is added at the end
+    when missing. The previous file is kept as `<name>.bak`."""
+    path = Path(path)
+    original = path.read_text() if path.exists() else ""
+    lines = original.splitlines()
+    span, insert_at, table_found = _locate(lines, table, name)
+    new_line = f"{name} = {format_value(value)}" if not remove else None
+    if span is not None:
+        lines[span[0]:span[1]] = [new_line] if new_line else []
+    elif remove:
+        return path                                      # nothing to remove
+    elif table_found or table == "":
+        lines.insert(insert_at or 0, new_line)
+    else:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines += [f"[{table}]", new_line]
+    return _write_checked(path, lines)
+
+
+def remove_table(path: Path, table: str) -> bool:
+    """Remove `[table]` and its keys (the comment lines right above it too). False when the
+    table is not there."""
+    path = Path(path)
+    lines = path.read_text().splitlines() if path.exists() else []
+    start = None
+    for index, line in enumerate(lines):
+        header = _HEADER.match(line)
+        if header and header.group(1).strip() == table:
+            start = index
+            break
+    if start is None:
+        return False
+    end = start + 1
+    while end < len(lines) and not _HEADER.match(lines[end]):
+        end += 1
+    while end > start + 1 and (not lines[end - 1].strip() or lines[end - 1].lstrip().startswith("#")) \
+            and end < len(lines):
+        end -= 1                                         # the next table's comments stay
+    while start > 0 and lines[start - 1].lstrip().startswith("#"):
+        start -= 1
+    del lines[start:end]
+    while start < len(lines) and start > 0 and not lines[start].strip() and not lines[start - 1].strip():
+        del lines[start]
+    _write_checked(path, lines)
+    return True
 
 
 def get(key: str):

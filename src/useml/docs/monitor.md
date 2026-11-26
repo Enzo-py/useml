@@ -101,7 +101,7 @@ min_interval = 10
 | `progress` | the current step's `i / n` and label |
 | `errors` | why a run stopped: the cause (signal, OOM…) and the end of the Python error |
 | `log` | the last `log_lines` lines of `run.log` |
-| `metrics` | curves: checkpoint metrics and `ctx.metric(...)` values |
+| `metrics` | curves: checkpoint metrics, `ctx.metric(...)` values, and what tqdm bars and printed lines show (see below) |
 | `results` | JSON outputs of finished steps (up to 64 KB each) |
 | `figures` | PNG figures of finished steps (up to 6, 400 KB each) |
 | `configs` | configs the steps read: name, hash, overrides, YAML |
@@ -149,12 +149,21 @@ off, and shows versions, an ablation map, correlations and curves side by side:
 
 ## Curves while a step runs
 
+Nothing to add when the step already shows its numbers: the postfix of a tqdm bar
+(`bar.set_postfix(loss=loss)`) and printed lines such as `epoch=3 loss=0.23` or
+`Epoch 3/10 - loss: 0.2310 - accuracy: 0.9120` become curves, and the outermost tqdm bar
+is the progress ([exp.md](exp.md), "Curves and progress without ctx"). To choose exactly
+what is drawn:
+
 ```python
 def train(dataset, model, epochs: int, *, ctx):
     for epoch in range(epochs):
         ...
-        ctx.metric(epoch, loss=loss, val_accuracy=accuracy)   # drawn by the dashboard
+        ctx.metric(epoch, loss=loss, val_accuracy=accuracy)   # only these are drawn
 ```
+
+Runs started before useml 1.4 have no curves unless they called `ctx.metric`: the
+numbers were never written down.
 
 ## Security
 

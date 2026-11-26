@@ -152,12 +152,15 @@ class Context:
         self.dir = folder / "steps" / name
         self.dir.mkdir(parents=True, exist_ok=True)
         self._last = 0.0
+        self._used_metric = False      # the step reports itself: no automatic capture
+        self._used_progress = False
 
     def log(self, message: str) -> None:
         print(f"[{self.name}] {message}", flush=True)
 
     def progress(self, done: int, total: int, label: str = "") -> None:
         """Where the step is (epoch i/N, batch i/N): shown by `exp.follow()`."""
+        self._used_progress = True
         if time.monotonic() - self._last > 0.5 or done >= total:
             write_state(self.experience_dir, step_progress=[int(done), int(total), label])
             self._last = time.monotonic()
@@ -165,6 +168,7 @@ class Context:
     def metric(self, step: int, **values) -> None:
         """Record metric values at `step` (`ctx.metric(120, loss=0.31, acc=0.8)`): kept in
         `metrics.jsonl` of the step, drawn as curves by the monitor."""
+        self._used_metric = True
         numbers = {k: float(v) for k, v in values.items() if isinstance(v, (int, float))}
         if not numbers:
             return
@@ -259,9 +263,13 @@ def execute(folder) -> None:
                 accepts_ctx = "ctx" in inspect.signature(function).parameters
             except (TypeError, ValueError):
                 accepts_ctx = False
+            context = Context(folder, name)
             if accepts_ctx:
-                kwargs["ctx"] = Context(folder, name)
-            value = function(*args, **kwargs)
+                kwargs["ctx"] = context
+            from ._capture import Capture
+
+            with Capture(folder, name, context=context):     # tqdm and printed metrics
+                value = function(*args, **kwargs)
             meta = _outputs.save(value, step_dir)
             cache[name] = value
             seconds = time.time() - started

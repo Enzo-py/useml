@@ -17,7 +17,9 @@ useml docs exp          # print one guide: quickstart, adopt, paths-and-hub, sto
 ## First steps in a project
 
 0. A project's methods, datasets and focus live in `[project]` of useml.toml
-   (`useml docs projects`); declare experiences with `method=` so their runs are grouped,
+   (`useml docs projects`): start it with `useml project init` (show its proposal before
+   `--yes`), change it with `useml project method add|set|rm`, `focus`, `dataset add|rm`
+   rather than by rewriting the file; declare experiences with `method=` so their runs are grouped,
    and keep step arguments plain (named values, configs with overrides): they become the
    factors of the ablation map.
 1. `useml check` — see what is set up and what is broken; each problem comes with the

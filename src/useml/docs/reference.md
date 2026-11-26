@@ -89,6 +89,9 @@ folder wins.
 | `USEML_CONFIG_ROOT` | the config folder (no type package) |
 | `USEML_NO_TMUX=1` | never start runs in tmux |
 
+`USEML_NO_AUTO_METRICS=1` turns off reading curves and progress from tqdm bars and
+printed lines ([exp.md](exp.md)).
+
 ## Commands
 
 | Command | What it does |
@@ -113,6 +116,10 @@ folder wins.
 | `useml datasets ls` / `info <name> [--split S]` / `prepare <name> [--force]` / `check <name>` | datasets and their drivers |
 | `useml monitor snapshot [--light]` / `serve [--port N]` / `deploy [--space ID] [--no-history]` / `start` / `stop` / `status` | the private dashboard and its agent |
 | `useml project show` / `runs` / `export [--format md\|json]` | this repository's project: methods, datasets, runs |
+| `useml project init [--yes] [--name N]` | propose a `[project]` from the experiences that exist; `--yes` writes it (additions only) |
+| `useml project describe <text>` / `focus <method>` | the description, the method you work on |
+| `useml project method add\|set <name> [-d TEXT] [-s STATUS] [-e GLOB…]` / `method rm <name>` | the methods |
+| `useml project dataset add\|rm <name>…` | the datasets of the project |
 | `useml config ls` / `describe <name>` / `show <name> [k=v ...]` / `find <hash>` | configs |
 | `useml exp ls` / `show` / `follow` / `log [-n N]` / `run [--no-follow]` / `stop [--now]` / `why` / `attach` / `stack` `<name>` | experiences |
 | `useml exp bundle <name> [-o DIR] [--data auto\|rows\|none] [--archive] [--checkpoints] [--partial]` | standalone archive |

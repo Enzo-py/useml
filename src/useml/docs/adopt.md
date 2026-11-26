@@ -103,6 +103,15 @@ yes (comments kept, previous file in `config.toml.bak`), then the machine is che
 For one key: `useml settings set <key> <value>`. The dashboard shows the same checks for
 each machine, with the same commands ([monitor.md](monitor.md)).
 
+## Grouping the experiments into a project
+
+```bash
+useml project init          # a method per group of experience names, the datasets, the focus
+useml project init --yes
+```
+
+See [projects.md](projects.md).
+
 ## Moving caches out of the home folder
 
 ```bash

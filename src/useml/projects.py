@@ -363,6 +363,217 @@ def runs(start=None, *, ended_only: bool = True) -> list[dict]:
     return sorted(out, key=lambda r: r.get("ended") or 0, reverse=True)
 
 
+# ── changing the declaration without opening the file ────────────────────────
+
+NAME = re.compile(r"[A-Za-z0-9_-]+")
+
+
+class ProjectError(ValueError):
+    pass
+
+
+def project_file(start=None) -> tuple[Path, str]:
+    """(the file that holds [project], the prefix of its tables): `useml.toml` → "",
+    `pyproject.toml` with [tool.useml] → "tool.useml.". Without either: a new useml.toml at
+    the root of the git repository (or the current folder)."""
+    import subprocess
+
+    from ._project import settings
+
+    folder, _ = settings(start)
+    if folder is not None:
+        own = folder / "useml.toml"
+        return (own, "") if own.is_file() else (folder / "pyproject.toml", "tool.useml.")
+    here = Path(start or Path.cwd()).resolve()
+    try:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=here,
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        top = ""
+    return (Path(top) if top else here) / "useml.toml", ""
+
+
+def _check_name(name: str, what: str) -> str:
+    if not NAME.fullmatch(name or ""):
+        raise ProjectError(f"{what} {name!r}: letters, digits, - and _ only")
+    return name
+
+
+def _require(start=None) -> dict:
+    project = declared(start)
+    if project is None:
+        raise ProjectError("no [project] here: `useml project init` proposes one from what "
+                           "exists")
+    return project
+
+
+def set_field(field: str, value, start=None) -> Path:
+    """`name`, `description` or `focus` of the project (None removes it)."""
+    from ._settings import edit_file
+
+    if field not in ("name", "description", "focus"):
+        raise ProjectError(f"unknown field {field!r}")
+    path, prefix = project_file(start)
+    if field == "focus" and value is not None:
+        project = _require(start)
+        if value not in project["methods"]:
+            raise ProjectError(f"no method {value!r}; known: {sorted(project['methods'])}. "
+                               f"Add it first: useml project method add {value}")
+    return edit_file(path, f"{prefix}project", field, value, remove=value is None)
+
+
+def add_method(name: str, *, description: str = "", status: str = "",
+               experiences: list | None = None, start=None) -> Path:
+    from ._settings import edit_file
+
+    _check_name(name, "method")
+    path, prefix = project_file(start)
+    project = declared(start)
+    if project and name in project["methods"]:
+        raise ProjectError(f"method {name!r} exists: useml project method set {name} …")
+    table = f"{prefix}project.methods.{name}"
+    edit_file(path, table, "description", description)
+    if status:
+        edit_file(path, table, "status", status)
+    if experiences:
+        edit_file(path, table, "experiences", list(experiences))
+    return path
+
+
+def set_method(name: str, *, description: str | None = None, status: str | None = None,
+               experiences: list | None = None, start=None) -> Path:
+    """Change what is given; an empty status or list removes the key."""
+    from ._settings import edit_file
+
+    project = _require(start)
+    if name not in project["methods"]:
+        raise ProjectError(f"no method {name!r}: useml project method add {name}")
+    path, prefix = project_file(start)
+    table = f"{prefix}project.methods.{name}"
+    if description is not None:
+        edit_file(path, table, "description", description)
+    if status is not None:
+        edit_file(path, table, "status", status or None, remove=not status)
+    if experiences is not None:
+        edit_file(path, table, "experiences", list(experiences) or None, remove=not experiences)
+    return path
+
+
+def remove_method(name: str, start=None) -> Path:
+    """Remove the method's table (its runs stay; they become unassigned). Clears the focus
+    if it pointed at it."""
+    from ._settings import remove_table
+
+    project = _require(start)
+    path, prefix = project_file(start)
+    if not remove_table(path, f"{prefix}project.methods.{name}"):
+        raise ProjectError(f"no table [{prefix}project.methods.{name}] in {path.name}")
+    if project.get("focus") == name:
+        set_field("focus", None, start)
+    return path
+
+
+def set_datasets(add=(), remove=(), start=None) -> Path:
+    from ._settings import edit_file
+
+    project = declared(start) or {"datasets": []}
+    current = list(project["datasets"])
+    updated = [d for d in current if d not in set(remove)]
+    for name in add:
+        if name not in updated:
+            updated.append(_check_name(name, "dataset"))
+    path, prefix = project_file(start)
+    return edit_file(path, f"{prefix}project", "datasets", updated or None, remove=not updated)
+
+
+# ── proposing a declaration from what exists ─────────────────────────────────
+
+def propose(start=None) -> dict:
+    """What `useml project init` would add, read from the experiences that exist: a method
+    per first part of their names (`wide/w4` → method `wide`, matched by `wide/*`), or the
+    method they declare; the datasets they read; the focus = the method of the experience
+    changed last. Nothing already declared is changed: only what is missing is added."""
+    from . import exp
+    from .monitor._snapshot import _data
+
+    path, prefix = project_file(start)
+    existing = declared(start)
+    methods: dict = {}
+    unassigned, datasets, latest = [], [], (0.0, None)
+    for experience in exp.ls():
+        spec = experience.spec or {}
+        method = method_of(experience.name, spec, existing) if existing else spec.get("method")
+        explicit = bool(method)
+        if not method and "/" in experience.name:
+            method = experience.name.split("/")[0]
+        if not method or not NAME.fullmatch(method):
+            unassigned.append(experience.name)
+            continue
+        entry = methods.setdefault(method, {"experiences": [], "glob": False})
+        entry["experiences"].append(experience.name)
+        entry["glob"] |= not explicit
+        for name in _data(spec):
+            base = name.split("[")[0]
+            if base not in datasets:
+                datasets.append(base)
+        try:
+            changed = (experience.folder / "experience.json").stat().st_mtime
+        except OSError:
+            changed = 0.0
+        latest = max(latest, (changed, method), key=lambda pair: pair[0])
+    declared_methods = (existing or {}).get("methods", {})
+    new_methods = {name: {"experiences": [f"{name}/*"] if info["glob"] else [],
+                          "count": len(info["experiences"])}
+                   for name, info in sorted(methods.items()) if name not in declared_methods}
+    new_datasets = [d for d in datasets if d not in (existing or {}).get("datasets", [])]
+    folder = path.parent
+    return {"file": str(path), "prefix": prefix, "exists": existing is not None,
+            "name": None if existing else folder.name,
+            "focus": None if existing and existing.get("focus") else latest[1],
+            "methods": new_methods, "datasets": new_datasets, "unassigned": unassigned}
+
+
+def proposal_text(plan: dict) -> str:
+    """The proposal as the TOML lines it would add."""
+    from ._settings import format_value
+
+    prefix, lines = plan["prefix"], []
+    head = []
+    if plan["name"]:
+        head += [f"name = {format_value(plan['name'])}", 'description = ""']
+    if plan["focus"]:
+        head.append(f"focus = {format_value(plan['focus'])}")
+    if plan["datasets"]:
+        head.append(f"datasets = [... + {', '.join(format_value(d) for d in plan['datasets'])}]"
+                    if plan["exists"] else f"datasets = {format_value(plan['datasets'])}")
+    if head:
+        lines += [f"[{prefix}project]", *head, ""]
+    for name, info in plan["methods"].items():
+        lines += [f"[{prefix}project.methods.{name}]   # {info['count']} experience(s)",
+                  'description = ""']
+        if info["experiences"]:
+            lines.append(f"experiences = {format_value(info['experiences'])}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n" if lines else ""
+
+
+def init(start=None, *, name: str | None = None) -> dict:
+    """Write the proposal (only additions). Returns it."""
+    plan = propose(start)
+    if name:
+        plan["name"] = name if not plan["exists"] else plan["name"]
+    if plan["name"]:
+        set_field("name", plan["name"], start)
+        set_field("description", "", start)
+    for method, info in plan["methods"].items():
+        add_method(method, experiences=info["experiences"] or None, start=start)
+    if plan["focus"]:
+        set_field("focus", plan["focus"], start)
+    if plan["datasets"]:
+        set_datasets(add=plan["datasets"], start=start)
+    return plan
+
+
 # ── export ────────────────────────────────────────────────────────────────────
 
 def summary(project: dict, records: list[dict]) -> dict:
@@ -428,5 +639,7 @@ def to_markdown(project: dict, records: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-__all__ = ["declared", "method_of", "factors", "results", "curves", "record", "runs",
+__all__ = ["project_file", "set_field", "add_method", "set_method", "remove_method",
+           "set_datasets", "propose", "proposal_text", "init", "ProjectError",
+           "declared", "method_of", "factors", "results", "curves", "record", "runs",
            "run_id", "summary", "to_markdown", "ENDED", "LOWER_IS_BETTER"]

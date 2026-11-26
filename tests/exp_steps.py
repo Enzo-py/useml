@@ -127,3 +127,24 @@ def train_with_metrics(steps: int, *, ctx):
         ctx.progress(step, steps, "training")
     print(f"trained in {ctx.dir}")                       # a path, to check the masking
     return {"final_loss": 1.0 / steps}
+
+
+def tqdm_train(epochs: int):
+    """Training code that never calls ctx: a tqdm bar with a postfix, and printed lines."""
+    from tqdm import tqdm
+
+    bar = tqdm(range(epochs), desc="train")
+    for epoch in bar:
+        bar.set_postfix(loss=1.0 / (epoch + 1), acc=f"{epoch / epochs:.2f}")
+        print(f"epoch={epoch} val_loss={2.0 / (epoch + 1):.3f} lr: 0.001")
+    print("seed: 3")                                      # one `name: number` alone: no metric
+    return {"done": True}
+
+
+def explicit_metrics(n: int, *, ctx):
+    from tqdm import tqdm
+
+    for i in tqdm(range(n)):
+        ctx.metric(i, mine=float(i))
+        print(f"other={i}")
+    return n

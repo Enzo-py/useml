@@ -350,9 +350,64 @@ def _settings(args) -> int:
     return 1
 
 
-def _project(args) -> int:
+def _edit_project(args) -> int:
     from . import projects
 
+    command = args.project_command
+    if command == "init":
+        plan = projects.propose()
+        if args.name and not plan["exists"]:
+            plan["name"] = args.name
+        text = projects.proposal_text(plan)
+        where = plan["file"]
+        if not text:
+            print(f"nothing to add: {where} already declares every method and dataset found")
+            return 0
+        print(f"{'adds to' if plan['exists'] else 'creates'} [project] in {where}:\n")
+        print(text)
+        if plan["unassigned"]:
+            print(f"experiences without a method ({len(plan['unassigned'])}): "
+                  + ", ".join(plan["unassigned"][:8])
+                  + "\n  → name them <method>/<name>, or `useml project method add <m> -e <glob>`\n")
+        if not args.yes:
+            print("nothing written: `useml project init --yes` writes it (nothing existing "
+                  "is changed; the previous file is kept as .bak)")
+            return 0
+        projects.init(name=args.name)
+        print(f"written: {where}. Describe it: useml project describe \"…\"")
+        return 0
+    if command == "describe":
+        path = projects.set_field("description", args.text)
+    elif command == "focus":
+        path = projects.set_field("focus", args.method)
+    elif command == "method":
+        if args.method_command == "rm":
+            path = projects.remove_method(args.name)
+        elif args.method_command == "add":
+            path = projects.add_method(args.name, description=args.description or "",
+                                       status=args.status or "", experiences=args.experiences)
+        else:
+            path = projects.set_method(args.name, description=args.description,
+                                       status=args.status, experiences=args.experiences)
+    else:
+        if args.dataset_command == "add":
+            path = projects.set_datasets(add=args.names)
+        else:
+            path = projects.set_datasets(remove=args.names)
+    print(f"{path} updated (previous: {path.name}.bak)")
+    return 0
+
+
+def _project(args) -> int:
+    from . import projects
+    from ._settings import SettingsError
+
+    if args.project_command in ("init", "describe", "focus", "method", "dataset"):
+        try:
+            return _edit_project(args)
+        except (projects.ProjectError, SettingsError) as error:
+            print(f"useml project: {error}", file=sys.stderr)
+            return 2
     project = projects.declared()
     if project is None:
         print("no [project] here: add one to useml.toml (`useml docs projects`)", file=sys.stderr)
@@ -624,6 +679,28 @@ def build_parser() -> argparse.ArgumentParser:
     project_commands.add_parser("runs", help="every ended run: method, factors, results")
     export_parser = project_commands.add_parser("export", help="datasets, methods, runs")
     export_parser.add_argument("--format", choices=["md", "json"], default="md")
+    init_project = project_commands.add_parser(
+        "init", help="propose a [project] from the experiences that exist; --yes writes it")
+    init_project.add_argument("--yes", action="store_true")
+    init_project.add_argument("--name")
+    describe_project = project_commands.add_parser("describe", help="set the description")
+    describe_project.add_argument("text")
+    focus_project = project_commands.add_parser("focus", help="the method you work on now")
+    focus_project.add_argument("method")
+    method_parser = project_commands.add_parser("method", help="add, change or remove a method")
+    method_commands = method_parser.add_subparsers(dest="method_command", required=True)
+    for verb in ("add", "set"):
+        verb_parser = method_commands.add_parser(verb)
+        verb_parser.add_argument("name")
+        verb_parser.add_argument("--description", "-d")
+        verb_parser.add_argument("--status", "-s", help="free text: idea, active, reference…")
+        verb_parser.add_argument("--experiences", "-e", nargs="*", metavar="GLOB",
+                                 help="names of its experiences (globs)")
+    method_commands.add_parser("rm").add_argument("name")
+    dataset_parser = project_commands.add_parser("dataset", help="add or remove datasets")
+    dataset_commands = dataset_parser.add_subparsers(dest="dataset_command", required=True)
+    dataset_commands.add_parser("add").add_argument("names", nargs="+")
+    dataset_commands.add_parser("rm").add_argument("names", nargs="+")
 
     monitor_parser = commands.add_parser("monitor", help="the private dashboard and its agent")
     monitor_commands = monitor_parser.add_subparsers(dest="monitor_command", required=True)

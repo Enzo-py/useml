@@ -127,9 +127,27 @@ def train(dataset, model, epochs: int, *, ctx):
 
 - `ctx.dir`: the step's folder, kept after an interruption;
 - `ctx.log(message)`;
-- `ctx.metric(step, **values)`: values drawn as curves by the monitor;
+- `ctx.metric(step, **values)`: values drawn as curves by the monitor (optional: see
+  below);
 - `ctx.checkpoints`: `save`, `latest`, `latest_step`, `best(metric, mode="min")`; keeps
   the last 3 and the best of each metric; writes atomically.
+
+## Curves and progress without `ctx`
+
+Code that never calls `ctx` still gets live curves and progress. While a step runs, useml
+reads what it already shows:
+
+- a **tqdm bar**: the outermost bar is the step's progress (`n / total`, its
+  description); the numbers given to `bar.set_postfix(loss=…, acc=…)` become points;
+- **printed lines** holding `name=number` pairs (`epoch=3 loss=0.23`), or two or more
+  `name: number` pairs (`Epoch 3/10 - loss: 0.2310 - accuracy: 0.9120`) become points.
+  `epoch`, `step`, `iter`, `iteration` or `global_step` on the line is the x of the point;
+  a single `seed: 42` is not taken.
+
+A step that calls `ctx.metric` or `ctx.progress` itself keeps only what it reports.
+`USEML_NO_AUTO_METRICS=1` turns the reading off. A run in this process (`detach=False`, a
+notebook) also writes what it prints to `run.log`, so the dashboard and
+`useml exp log` show it.
 
 ## On disk
 

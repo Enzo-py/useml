@@ -53,6 +53,12 @@ No: it contains a copy of useml. It needs Python and the packages listed in
 With the monitor: a private Hugging Face Space and an agent per machine, no port to open.
 See [monitor.md](monitor.md).
 
+**Why does the dashboard show no curve for my run?**
+Curves come from `ctx.metric`, from the postfix of a tqdm bar, or from printed lines like
+`loss=0.23` (since 1.4, on the machine running the experience). A run that printed its
+numbers otherwise, or that started with an older useml, has none: add `ctx.metric(...)`,
+or print `name=value`.
+
 **How do I change a setting without opening the TOML file?**
 `useml settings set <key> <value>` (`useml settings show` lists them). The dashboard's
 setup view writes that command for you.

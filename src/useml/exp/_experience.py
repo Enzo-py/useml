@@ -184,8 +184,13 @@ class Experience:
             record_code(self.folder, self.spec)
             previous = os.environ.get("CUDA_VISIBLE_DEVICES")
             os.environ.update({k: v for k, v in env.items() if k == "CUDA_VISIBLE_DEVICES"})
+            from ._capture import tee_log
+
+            with open(self.folder / "run.log", "ab") as log:
+                log.write(f"\n=== run {time.strftime('%Y-%m-%d %H:%M:%S')} (in this process) ===\n".encode())
             try:
-                execute(self.folder)
+                with tee_log(self.folder / "run.log"):        # the dashboard reads it
+                    execute(self.folder)
             finally:
                 if gpu is not None:
                     if previous is None:

@@ -15,7 +15,38 @@ Four words, with an example:
   from the steps' JSON outputs, plus the last and best value of each curve
   (`train.loss.last`, `train.loss.best`).
 
-## Declare it in the repository
+## Start from what exists
+
+```bash
+useml project init          # reads the experiences that exist, prints what it would add
+useml project init --yes    # writes it
+```
+
+It proposes a method per first part of the experience names (`wide/w4`, `wide/w8` →
+method `wide`, matched by `wide/*`), or the method an experience declares; the datasets
+the experiences read; and as focus, the method of the experience changed last. It writes
+in `useml.toml`, or under `[tool.useml.project]` when the project's useml settings are in
+pyproject.toml. It only ADDS: nothing declared is changed, comments stay, the previous
+file is kept as `.bak`. Experiences whose names have no group are listed, to name them
+or to match them with a method.
+
+## Change it with commands
+
+```bash
+useml project describe "Image classifiers that keep their accuracy on corrupted inputs."
+useml project method add distill -d "Distil the wide model into a small one" -s idea -e "distill/*"
+useml project method set wide -s active          # change only what is given
+useml project method rm baseline                 # its runs stay; they become unassigned
+useml project focus wide
+useml project dataset add cifar10 cifar10-c
+useml project dataset rm cifar10-c
+```
+
+Each edits one line (or one table) of the file, like `useml settings`, and refuses what
+would be wrong: an unknown method as focus, a method that exists already, a name with
+spaces. The dashboard's **Add a component** writes these commands for you.
+
+## The declaration, written by hand
 
 ```toml
 # useml.toml (or the same tables under [tool.useml.project] in pyproject.toml)
@@ -82,8 +113,8 @@ dashboard keeps them. The **Projects** tab shows:
 - a run's page: results, factors, steps, configs, curves, and **New alternative**: the
   run's declaration as Python, to edit (one value) and run on a machine. It becomes a new
   row of the map;
-- **Add a component**: the page writes the TOML of a new method, a dataset or a new
-  focus, and the code to start it. **Export** gives Markdown or JSON.
+- **Add a component**: the page writes the command that adds a method, a dataset or sets
+  the focus, and the code to start it. **Export** gives Markdown or JSON.
 
 The page writes code and settings; it never sends anything to a machine.
 
