@@ -94,6 +94,8 @@ useml project export --format json
 With the [monitor](monitor.md), each agent sends the records of finished runs, and the
 dashboard keeps them. The **Projects** tab shows:
 
+- **running now**: the runs of the project going on at this moment, with their progress,
+  the last values of their curves and their last log line, updated at every refresh;
 - **the methods**, the focus first: number of runs, code versions, best value of the main
   result, last run;
 - **the datasets** and which methods used them;
@@ -109,7 +111,9 @@ dashboard keeps them. The **Projects** tab shows:
   green when more of the factor goes with a better result — and `η` (from 0 to 1) for
   choices among names, how much the choice explains the result. A click draws the runs.
   With few runs, read it as a hint, not a proof;
-- **curves** of the runs side by side;
+- **curves** of the runs side by side, the running ones included (thicker, marked
+  "live", updated at every refresh): a new attempt is compared with the previous ones while
+  it trains. A running run also shows its current values in the ablation map;
 - a run's page: results, factors, steps, configs, curves, and **New alternative**: the
   run's declaration as Python, to edit (one value) and run on a machine. It becomes a new
   row of the map;
@@ -117,6 +121,11 @@ dashboard keeps them. The **Projects** tab shows:
   the focus, and the code to start it. **Export** gives Markdown or JSON.
 
 The page writes code and settings; it never sends anything to a machine.
+
+**An empty Projects tab** says why, machine by machine, with the fix to run there: an
+older useml (projects need 1.3, curves read from tqdm and printed lines need 1.4), the
+group `projects` not shared, or experiences that belong to no declared project
+(`useml project init` in the repository they run from).
 
 ## Where the history is kept
 

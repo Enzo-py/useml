@@ -183,29 +183,35 @@ class Agent:
         if threading.current_thread() is threading.main_thread():
             # Only the main thread may set a handler; inside `serve` the agent is a thread
             # and stops with the process.
-            signal.signal(signal.SIGTERM, lambda *_: setattr(self, "running", False))
+            def stop_now(*_):
+                # Leave at once, even in the middle of a long poll (up to 25 s).
+                self.running = False
+                raise SystemExit(0)
+            signal.signal(signal.SIGTERM, stop_now)
         _log(f"agent {self.alias} → {self.url} (sharing: {', '.join(self.config['share'])})")
-        delay = 5.0
-        while self.running:
-            try:
-                if self.last_push == 0.0:
-                    self.push(full=True)
-                    self.last_change = self._signature()
-                self.step()
-                delay = 5.0
-            except urllib.error.HTTPError as error:
-                if error.code in (401, 403):
-                    _log(f"refused by the dashboard ({error.code}): is the token the Space "
-                         f"owner's? retrying in {delay:.0f} s")
-                else:
-                    _log(f"dashboard error {error.code}; retrying in {delay:.0f} s")
-                self._sleep(delay)
-                delay = min(delay * 2, 300.0)
-            except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
-                _log(f"cannot reach the dashboard ({error}); retrying in {delay:.0f} s")
-                self._sleep(delay)
-                delay = min(delay * 2, 300.0)
-        _log("agent stopped")
+        try:
+            delay = 5.0
+            while self.running:
+                try:
+                    if self.last_push == 0.0:
+                        self.push(full=True)
+                        self.last_change = self._signature()
+                    self.step()
+                    delay = 5.0
+                except urllib.error.HTTPError as error:
+                    if error.code in (401, 403):
+                        _log(f"refused by the dashboard ({error.code}): is the token the Space "
+                             f"owner's? retrying in {delay:.0f} s")
+                    else:
+                        _log(f"dashboard error {error.code}; retrying in {delay:.0f} s")
+                    self._sleep(delay)
+                    delay = min(delay * 2, 300.0)
+                except (urllib.error.URLError, TimeoutError, OSError, ValueError) as error:
+                    _log(f"cannot reach the dashboard ({error}); retrying in {delay:.0f} s")
+                    self._sleep(delay)
+                    delay = min(delay * 2, 300.0)
+        finally:
+            _log("agent stopped")
 
     def _sleep(self, seconds: float) -> None:
         end = time.time() + seconds
@@ -261,14 +267,25 @@ def start() -> dict:
     import threading
 
     threading.Thread(target=process.wait, daemon=True).start()
+    for _ in range(100):                     # until it says it runs (its pid file), ≤ 10 s
+        if agent_pid() or process.poll() is not None:
+            break
+        time.sleep(0.1)
     return {"backend": "detached", "pid": process.pid}
 
 
-def stop() -> bool:
+def stop(timeout: float = 15.0) -> bool:
+    """Stop the agent and wait until it is gone (so that `start` right after works)."""
     pid = agent_pid()
     if not pid:
         return False
     os.kill(pid, signal.SIGTERM)
+    deadline = time.time() + timeout
+    while agent_pid() and time.time() < deadline:
+        time.sleep(0.2)
+    if agent_pid():
+        os.kill(pid, signal.SIGKILL)
+        time.sleep(0.2)
     return True
 
 

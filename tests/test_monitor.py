@@ -430,3 +430,26 @@ def test_setup_carries_the_checks_and_light_state_their_count(experiences, monke
     _push(client, "m", {"experiences": [], "setup": {"checks": checks}})
     light = client.get("/api/state?light=1").json()["machines"][0]["snapshot"]
     assert light["health"] == {"warn": 1, "fail": 1}
+
+
+def test_stop_waits_for_the_agent_so_start_works_right_after(experiences, served, tmp_path,
+                                                            monkeypatch):
+    """The agent sits in a long poll (25 s on a real dashboard): stop must not leave it
+    half-alive, or `start` right after believes it still runs and starts nothing."""
+    from useml.monitor import _agent
+
+    machine_config(tmp_path, f'[monitor]\nurl = "{served}"\n')
+    monkeypatch.setenv("HF_TOKEN", "local-secret")
+    first = monitor.start()
+    deadline = time.time() + 20
+    while not _agent.agent_pid() and time.time() < deadline:
+        time.sleep(0.1)
+    time.sleep(1.5)                                    # now inside a long poll
+    started = time.time()
+    assert monitor.stop() is True
+    assert time.time() - started < 5 and _agent.agent_pid() is None
+    second = monitor.start()
+    try:
+        assert not second.get("already") and second["pid"] != first["pid"]
+    finally:
+        monitor.stop()

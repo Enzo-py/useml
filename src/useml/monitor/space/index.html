@@ -500,6 +500,7 @@ async function tick(full) {
     render();
     if (route) loadRoute(full);
     if (view.kind !== "live" && (full || Date.now() - projectsLoaded > 60000)) loadProjectsView();
+    else if (view.kind !== "live" && !document.activeElement?.closest?.("#projectsView select, #projectsView input")) renderProjectsView();
   } catch (error) { lastError = error.message; }
   busy = false; $("refresh").disabled = false; renderLive(); schedule();
 }
@@ -651,6 +652,9 @@ function machineCard(machine, all) {
   card.append(el("div", {class: "small muted"},
     silent ? el("span", {class: "warn"}, `no signal for ${ago(machine.polled_age).replace(" ago", "")}`) : `online · ${runningHere} running`,
     name !== machine.alias ? ` · ${machine.alias}` : "", info.useml ? ` · useml ${info.useml}` : ""));
+  if (info.useml && older(info.useml, "1.4.0")) {
+    card.append(el("div", {class: "small warn"}, `useml ${info.useml}: update it for live curves and projects (pip install -U "useml[monitor]", then restart the agent)`));
+  }
   const res = el("div", {class: "res"});
   for (const gpu of info.gpus || []) {
     const fraction = gpu.mem_total ? gpu.mem_used / gpu.mem_total : 0;
@@ -1091,15 +1095,48 @@ async function loadProjectsView() {
 }
 
 // ── the runs of a page: kept records + experiences running now ──────────────
+const ENDED = ["done", "failed", "died", "stopped"];
+function curveResults(curves) {
+  // The same keys as a kept run's results: "<step>.<name>.last" and ".best".
+  const results = {};
+  for (const [step, points] of Object.entries(curves || {})) {
+    const names = new Set(points.flatMap((p) => Object.keys(p)).filter((k) => k !== "step"));
+    for (const name of names) {
+      const values = points.map((p) => p[name]).filter((v) => typeof v === "number");
+      if (!values.length) continue;
+      results[`${step}.${name}.last`] = values[values.length - 1];
+      results[`${step}.${name}.best`] = (LOWER_BETTER.test(name) ? Math.min : Math.max)(...values);
+    }
+  }
+  return results;
+}
+function liveRuns(name) {
+  // Runs going on now, from what the Live tab already received (refreshed at every tick).
+  const out = [];
+  for (const machine of state?.machines || []) {
+    for (const experience of machine.snapshot.experiences || []) {
+      if (experience.project !== name || ENDED.includes(experience.status)) continue;
+      const status = statusOf(experience, machine);
+      out.push({key: `live:${machine.alias}:${experience.name}`, live: true, alias: machine.alias,
+                experience: experience.name, method: experience.method, status, factors: experience.factors || {},
+                results: curveResults(experience.metrics), curves: experience.metrics || {}, version: experience.version,
+                machine: machineName(machine), ended: experience.updated,
+                item: {key: `${machine.alias}::${experience.name}`, machine, experience, status,
+                       updated: experience.updated ? state.now - experience.updated : null}});
+    }
+  }
+  return out;
+}
 function pageRuns() {
   if (!projectPage) return [];
   const kept = projectPage.runs.map((r) => ({...r, key: r.id}));
-  const live = (projectPage.live || []).filter((e) => !["done", "failed", "died", "stopped"].includes(e.status))
-    .map((e) => ({key: `live:${e.machine}:${e.name}`, live: true, experience: e.name, method: e.method,
-                  status: e.status === "running" && e.polled_age > SILENT_AFTER ? "silent" : e.status,
-                  factors: e.factors || {}, results: {}, version: e.version, machine: e.machine_label || e.machine,
-                  ended: e.updated, progress: e.progress, done: e.done, total: e.total}));
-  return [...live, ...kept];
+  return [...liveRuns(projectPage.project.name), ...kept];
+}
+function runningSection(runs) {
+  const live = runs.filter((r) => r.live && r.item);
+  if (!live.length) return null;
+  return el("section", {}, el("h2", {}, "Running now ", el("span", {class: "count"}, String(live.length))),
+    el("div", {class: "focus-grid"}, live.map((r) => focusCard(r.item))));
 }
 function methodsOf(project, runs) {
   const names = new Set(Object.keys(project.methods || {}));
@@ -1182,19 +1219,50 @@ function historyNote(history) {
   if (history.kept) return el("span", {class: "chip-note ok", title: history.repo || "a folder of this machine"}, `history kept · ${history.runs} runs`);
   return el("span", {class: "chip-note warn", title: "Runs are kept until the Space restarts. See useml docs projects."}, "history not kept");
 }
+function older(version, than) {
+  const a = String(version || "0").split(".").map(Number), b = than.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0);
+  return false;
+}
+function projectDiagnostics() {
+  // Why a machine sends no project (or no curve): the fix to run on it.
+  const out = [];
+  for (const machine of state?.machines || []) {
+    const snapshot = machine.snapshot, version = snapshot.machine?.useml, name = machineName(machine);
+    const experiences = snapshot.experiences || [];
+    const share = snapshot.share || [];
+    if (older(version, "1.4.0")) {
+      out.push({name, text: `runs useml ${version || "?"}: projects need 1.3, curves read from tqdm and printed lines need 1.4. On it:`,
+                commands: ['pip install -U "useml[monitor]"', "useml monitor stop", "useml monitor start"]});
+    } else if (!share.includes("projects")) {
+      out.push({name, text: "does not share the group “projects”. On it:",
+                commands: [`useml settings set monitor.share ${quote(JSON.stringify([...share, "projects"]))}`]});
+    } else if (experiences.length && !experiences.some((e) => e.project)) {
+      out.push({name, text: `reports ${experiences.length} experiences, none in a project: declare one in the repository they run from. On it:`,
+                commands: ["useml project init", "useml project init --yes"]});
+    }
+  }
+  return out;
+}
+function diagnosticsBlock() {
+  const found = projectDiagnostics();
+  if (!found.length) return null;
+  return el("div", {class: "card block"}, el("h4", {}, "Why some runs are missing here"),
+    found.map((d) => el("div", {style: {marginBottom: "10px"}}, el("div", {class: "small"}, el("b", {}, d.name), ` ${d.text}`), d.commands.map(commandLine))));
+}
 function renderProjectList(root) {
   const list = projectsList?.projects || [];
   const head = el("div", {class: "page-head"}, el("h1", {}, "Projects"), historyNote(projectsList?.history));
   if (!list.length) {
-    root.replaceChildren(head, el("div", {class: "card onboard"},
+    root.replaceChildren(...[head, diagnosticsBlock(), el("div", {class: "card onboard"},
       el("h3", {}, "Declare a project"),
       el("div", {class: "muted small"}, "In the repository, useml proposes one from the experiences that exist (a method per group of names, the datasets they read, the focus); --yes writes it:"),
       commandLine("useml project init"),
       el("div", {class: "muted small"}, "Then change it with commands: useml project describe, focus, method add, dataset add. Every machine running this repository reports to the same project."),
-      commandLine("useml docs projects")));
+      commandLine("useml docs projects"))].filter(Boolean));
     return;
   }
-  root.replaceChildren(head, el("div", {class: "focus-grid"}, list.map((p) => el("article", {class: "card focus project-card", tabindex: "0",
+  root.replaceChildren(...[head, diagnosticsBlock()].filter(Boolean), el("div", {class: "focus-grid"}, list.map((p) => el("article", {class: "card focus project-card", tabindex: "0",
       onclick: () => go(`#/projects/${encodeURIComponent(p.name)}`)},
     el("div", {class: "head"}, el("div", {class: "name ellipsis"}, p.name), p.running ? pill("running") : null),
     p.description ? el("div", {class: "small muted"}, p.description) : null,
@@ -1236,6 +1304,7 @@ function renderProject(root) {
       primarySelect(project, runs), el("div", {class: "spacer"}),
       el("button", {class: "btn small", onclick: () => go(`#/new/${encodeURIComponent(project.name)}/method`)}, "+ Add a component"),
       exportMenu(project, runs))];
+  out.push(runningSection(runs));
   // methods
   out.push(el("section", {}, el("h2", {}, "Methods ", el("span", {class: "count"}, "what you try")),
     el("div", {class: "method-grid"}, methodsOf(project, runs).map((name) => {
@@ -1292,6 +1361,7 @@ function renderMethod(root) {
   if (!runs.length) out.push(el("div", {class: "card empty-now"}, "No run of this method yet. ",
     el("a", {href: `#/new/${encodeURIComponent(project.name)}/method`}, "How to start one")));
   else {
+    out.push(runningSection(runs));
     out.push(versionsSection(project, runs));
     out.push(ablationSection(project, runs, {scope: "method"}));
     out.push(curvesSection(runs));
@@ -1391,7 +1461,7 @@ function ablationSection(project, runs, {scope}) {
       cells.push(el("td", {class: `factor${differs ? " differs" : ""}`}, show(value)));
     }
     cells.push(el("td", {class: "hide-sm mono small"}, run.version ? `v${run.version}` : ""));
-    return el("tr", {class: run.key === mapState.reference ? "is-ref" : "", onclick: () => run.live ? go(`#/exp/${encodeURIComponent(run.key.split(":")[1])}/${encodeURIComponent(run.experience)}`)
+    return el("tr", {class: run.key === mapState.reference ? "is-ref" : "", onclick: () => run.live ? go(`#/exp/${encodeURIComponent(run.alias)}/${encodeURIComponent(run.experience)}`)
       : go(`#/run/${encodeURIComponent(project.name)}/${run.id}`)}, cells);
   });
   const fixedText = fixed.slice(0, 12).map((k) => `${k} = ${show(withMethod.find((r) => r.factors && k in r.factors)?.factors[k])}`).join(" · ");
@@ -1477,19 +1547,22 @@ function scatter(link, cell) {
 }
 
 function curvesSection(runs) {
-  const kept = runs.filter((r) => !r.live && r.curves);
+  // Running runs first (drawn thicker, "live"), then the most recent kept ones.
+  const withCurves = runs.filter((r) => r.curves && Object.keys(r.curves).length);
   const keys = new Set();
-  for (const run of kept) for (const [step, points] of Object.entries(run.curves)) for (const p of points) for (const k of Object.keys(p)) if (k !== "step") keys.add(`${step}.${k}`);
+  for (const run of withCurves) for (const [step, points] of Object.entries(run.curves)) for (const p of points) for (const k of Object.keys(p)) if (k !== "step") keys.add(`${step}::${k}`);
   if (!keys.size) return null;
   const list = [...keys].sort();
   const current = list.includes(mapState.curve) ? mapState.curve : list[0];
-  const [step, ...rest] = current.split("."); const metric = rest.join(".");
-  const series = kept.map((run) => ({run, points: (run.curves[step] || []).filter((p) => typeof p[metric] === "number").map((p) => [p.step, p[metric]])}))
+  const [step, metric] = current.split("::");
+  const series = withCurves.map((run) => ({run, points: (run.curves[step] || []).filter((p) => typeof p[metric] === "number").map((p) => [p.step, p[metric]])}))
     .filter((s) => s.points.length > 1).slice(0, 8);
   const select = el("select", {class: "select", onchange: (e) => { mapState.curve = e.target.value; renderProjectsView(); }},
-    list.map((k) => el("option", {value: k, selected: k === current ? "selected" : null}, k)));
+    list.map((k) => el("option", {value: k, selected: k === current ? "selected" : null}, k.replace("::", " · "))));
+  const live = series.filter((s) => s.run.live).length;
   const box = el("div", {class: "card block"}, el("div", {class: "toolbar"}, el("label", {class: "inline-label"}, "curve", select),
-    el("span", {class: "small muted"}, series.length < kept.length ? `the ${series.length} most recent runs that have it` : "")));
+    el("span", {class: "small muted"}, [live ? `${live} running (updated every refresh)` : null,
+      series.length < withCurves.length ? `the ${series.length} most recent runs that have it` : null].filter(Boolean).join(" · "))));
   if (series.length) {
     const all = series.flatMap((s) => s.points);
     const minX = Math.min(...all.map((p) => p[0])), maxX = Math.max(...all.map((p) => p[0]));
@@ -1499,9 +1572,14 @@ function curvesSection(runs) {
     const py = (y) => pad + (1 - (maxY === minY ? .5 : (y - minY) / (maxY - minY))) * (h - pad - bottom);
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("class", "scatter");
-    svg.innerHTML = series.map((s, i) => `<path d="${s.points.map(([x, y], j) => `${j ? "L" : "M"}${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(" ")}" fill="none" stroke="${PALETTE[i % PALETTE.length]}" stroke-width="2" vector-effect="non-scaling-stroke"/>`).join("");
+    svg.innerHTML = series.map((s, i) => {
+      const path = s.points.map(([x, y], j) => `${j ? "L" : "M"}${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(" ");
+      const [lx, ly] = s.points[s.points.length - 1];
+      return `<path d="${path}" fill="none" stroke="${PALETTE[i % PALETTE.length]}" stroke-width="${s.run.live ? 3 : 1.8}" vector-effect="non-scaling-stroke"/>` +
+        (s.run.live ? `<circle cx="${px(lx).toFixed(1)}" cy="${py(ly).toFixed(1)}" r="4" fill="${PALETTE[i % PALETTE.length]}"/>` : "");
+    }).join("");
     box.append(svg, el("div", {class: "legend"}, series.map((s, i) => el("span", {}, el("i", {style: {background: PALETTE[i % PALETTE.length]}}),
-      `${s.run.experience} · ${number(s.points[s.points.length - 1][1])}`))),
+      `${s.run.experience}${s.run.live ? " · live" : ""} · ${number(s.points[s.points.length - 1][1])}`))),
       el("div", {class: "tiny muted"}, `${metric}: ${number(minY)} to ${number(maxY)} · step ${number(minX)} to ${number(maxX)}`));
   }
   return el("section", {}, el("h2", {}, "Curves ", el("span", {class: "count"}, "the runs side by side")), box);
