@@ -1,5 +1,5 @@
 FROM python:3.11-slim
-RUN pip install --no-cache-dir fastapi==0.115.6 uvicorn==0.32.1
+RUN pip install --no-cache-dir fastapi==0.115.6 uvicorn==0.32.1 huggingface_hub==0.26.5
 RUN useradd -m -u 1000 user
 USER user
 WORKDIR /home/user/app

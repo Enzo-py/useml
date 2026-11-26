@@ -40,10 +40,12 @@ Edit it with `useml settings` rather than by hand: comments and order are kept, 
 previous file is saved as `config.toml.bak`, unknown keys and wrong types are refused.
 
 ```bash
+useml settings edit                            # one by one, then `useml check`
 useml settings show                            # every known key, its value and meaning
 useml settings get monitor.share
 useml settings set monitor.share '["status", "steps", "errors"]'
 useml settings set env.HF_HOME /data/shared/hf
+useml settings set monitor.label 'GPU server'  # the name shown on the dashboard
 useml settings unset store.max_size
 ```
 
@@ -92,9 +94,10 @@ folder wins.
 | Command | What it does |
 |---|---|
 | `useml init [--root DIR] [--store DIR] [--yes] [--no-machine] [--no-project]` | set up the machine and the project; adds, never overwrites |
-| `useml check [--measure]` | check that everything is in place |
+| `useml check [--measure] [--json]` | check that everything is in place; each problem with the command that fixes it |
 | `useml docs [topic] [--path]` | read this documentation |
 | `useml settings show` / `get <key>` / `set <key> <value>` / `unset <key>` | read and edit the machine config, keeping comments |
+| `useml settings edit [section]` | walk the settings one by one, then check the machine |
 | `useml paths` | every cache variable, before and after |
 | `useml hub ls [--refresh] [--json]` | recorded downloads |
 | `useml hub get <uri> [--dest DIR] [--extract] [--refresh]` | download, print the path |
@@ -108,7 +111,8 @@ folder wins.
 | `useml store unpin <owner>` | release pins |
 | `useml data ls` / `tables` / `info <name>` / `jobs` / `follow <job>` / `rm <name> [--table]` | processed datasets |
 | `useml datasets ls` / `info <name> [--split S]` / `prepare <name> [--force]` / `check <name>` | datasets and their drivers |
-| `useml monitor snapshot [--light]` / `serve [--port N]` / `deploy [--space ID]` / `start` / `stop` / `status` | the private dashboard and its agent |
+| `useml monitor snapshot [--light]` / `serve [--port N]` / `deploy [--space ID] [--no-history]` / `start` / `stop` / `status` | the private dashboard and its agent |
+| `useml project show` / `runs` / `export [--format md\|json]` | this repository's project: methods, datasets, runs |
 | `useml config ls` / `describe <name>` / `show <name> [k=v ...]` / `find <hash>` | configs |
 | `useml exp ls` / `show` / `follow` / `log [-n N]` / `run [--no-follow]` / `stop [--now]` / `why` / `attach` / `stack` `<name>` | experiences |
 | `useml exp bundle <name> [-o DIR] [--data auto\|rows\|none] [--archive] [--checkpoints] [--partial]` | standalone archive |
@@ -141,7 +145,7 @@ config.load_raw(...); config.describe(name); config.find(hash)
 config.create(name, obj); config.get_config(obj); config.diff(a, b)
 config.use(root, packages=[...]); config.register(cls)
 
-exp.experience(name, note="", run=True, detach=True, follow=True, gpu=None)
+exp.experience(name, note="", run=True, detach=True, follow=True, gpu=None, method=None, tags=None)
 exp.get("experience/step"); exp.open(name); exp.ls(); exp.running()
 exp.bundle(name, destination=None, data="auto", checkpoints=False, archive=False)
 ```

@@ -2,357 +2,1656 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
 <title>useml monitor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M7 20l5-6 5 4 8-9' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
   :root {
-    --bg: #f7f7f5; --panel: #ffffff; --text: #1f2328; --muted: #656d76; --line: #e3e3e0;
-    --accent: #3b5bdb; --ok: #2b8a3e; --warn: #b7791f; --bad: #c92a2a; --run: #1c7ed6;
-    --bar: #e9ecef; --code: #f1f3f5;
+    --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f1f3f6; --text: #14171c; --muted: #5f6873;
+    --faint: #8b939c; --line: #e4e7ec; --accent: #4f46e5; --on-accent: #ffffff;
+    --run: #2563eb; --ok: #16a34a; --bad: #dc2626; --warn: #d97706; --idle: #6b7280;
+    --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06);
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #141517; --panel: #1c1d21; --text: #e6e6e6; --muted: #9aa0a6; --line: #2c2e33;
-      --accent: #748ffc; --ok: #51cf66; --warn: #fcc419; --bad: #ff6b6b; --run: #4dabf7;
-      --bar: #2c2e33; --code: #25262b;
+      --bg: #0e1014; --surface: #161a20; --surface-2: #1d222a; --text: #e8eaed; --muted: #9aa3ad;
+      --faint: #6b7480; --line: #262c35; --accent: #818cf8; --on-accent: #0e1014;
+      --run: #60a5fa; --ok: #4ade80; --bad: #f87171; --warn: #fbbf24; --idle: #9aa3ad;
+      --shadow: none;
     }
   }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body { margin: 0; background: var(--bg); color: var(--text);
-         font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  header { position: sticky; top: 0; z-index: 2; display: flex; gap: 12px; align-items: center;
-           padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 16px; margin: 0; flex: 1; }
-  button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
-           background: var(--panel); color: var(--text); cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  button:disabled { opacity: .6; cursor: wait; }
-  label { color: var(--muted); font-size: 13px; display: flex; gap: 6px; align-items: center; }
-  main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
-  .machines { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
-  .machine h2 { font-size: 15px; margin: 0 0 6px; display: flex; justify-content: space-between; gap: 8px; }
-  .muted { color: var(--muted); }
-  .small { font-size: 12px; }
-  .bar { height: 6px; background: var(--bar); border-radius: 3px; overflow: hidden; margin: 3px 0 8px; }
-  .bar > span { display: block; height: 100%; background: var(--accent); }
+         font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+         font-variant-numeric: tabular-nums; }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  code, pre, .mono { font-family: var(--mono); }
+  [hidden] { display: none !important; }
+
+  /* top bar */
+  header { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 85%, transparent);
+           backdrop-filter: saturate(1.4) blur(10px); -webkit-backdrop-filter: saturate(1.4) blur(10px);
+           border-bottom: 1px solid var(--line); }
+  .bar-inner { max-width: 1280px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 12px; align-items: center; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 16px; letter-spacing: -.01em; }
+  .brand .logo { width: 24px; height: 24px; border-radius: 7px; background: var(--accent); display: grid; place-items: center; }
+  .brand .logo svg { width: 16px; height: 16px; }
+  .brand span.muted { font-weight: 500; }
+  .spacer { flex: 1; }
+  .live { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); flex: none; }
+  .live.on .dot { background: var(--ok); box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent); animation: pulse 2s infinite; }
+  .live.busy .dot { background: var(--run); }
+  .live.err .dot { background: var(--bad); }
+  .live.err { color: var(--bad); }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); }
+                     70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  @media (prefers-reduced-motion: reduce) { .live.on .dot { animation: none; } }
+  .select { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line);
+         background: var(--surface); font-size: 14px; font-weight: 500; white-space: nowrap; }
+  .btn:hover { background: var(--surface-2); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.small { padding: 4px 10px; font-size: 13px; }
+  .btn.ghost { border-color: transparent; background: transparent; }
+  .btn:disabled { opacity: .55; cursor: wait; }
+  .icon-btn { border: 0; background: transparent; padding: 4px; border-radius: 6px; color: var(--faint); line-height: 0; }
+  .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+  .icon-btn svg { width: 16px; height: 16px; }
+  .icon-btn.pinned { color: var(--warn); }
+
+  main > * { min-width: 0; }
+  main { max-width: 1280px; margin: 0 auto; padding: 18px 16px 64px; display: grid; gap: 28px; }
+  section > h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+                 margin: 0 0 10px; display: flex; align-items: center; gap: 10px; }
+  section > h2 .count { font-weight: 500; color: var(--faint); text-transform: none; letter-spacing: 0; }
+  .card { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  .muted { color: var(--muted); } .faint { color: var(--faint); } .small { font-size: 13px; } .tiny { font-size: 12px; }
+  .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+  /* summary */
+  .summary { display: flex; flex-wrap: wrap; gap: 10px; }
+  .stat { padding: 10px 14px; min-width: 120px; display: grid; gap: 2px; cursor: pointer; text-align: left; }
+  .stat:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+  .stat b { font-size: 22px; font-weight: 650; letter-spacing: -.02em; line-height: 1.1; }
+  .stat span { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+
+  /* status pill */
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px 2px 8px; border-radius: 999px; font-size: 12px;
+          font-weight: 600; white-space: nowrap; color: var(--c); background: color-mix(in srgb, var(--c) 13%, transparent); }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .st-running { --c: var(--run); } .st-done { --c: var(--ok); } .st-failed, .st-died { --c: var(--bad); }
+  .st-silent { --c: var(--warn); } .st-stopped, .st-new { --c: var(--idle); }
+  .st-running.pill::before { animation: blink 1.6s infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+
+  /* progress bars */
+  .meter { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+  .meter > i { display: block; height: 100%; border-radius: inherit; background: var(--c, var(--accent)); transition: width .4s ease; }
+  .meter.thick { height: 8px; }
+
+  /* focus cards: what is happening now */
+  .focus-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); }
+  .focus { padding: 14px 16px; display: grid; gap: 10px; cursor: pointer; position: relative; border-left: 3px solid var(--c); }
+  .focus:hover { border-color: color-mix(in srgb, var(--c) 60%, var(--line)); border-left-color: var(--c); }
+  .focus .head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .focus .name { font-weight: 650; font-size: 16px; letter-spacing: -.01em; flex: 1; }
+  .focus .where { font-size: 13px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; }
+  .progress-line { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 5px; }
+  .progress-line b { font-weight: 600; }
+  .metrics-row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .metric { display: grid; grid-template-columns: auto auto; gap: 0 8px; align-items: end; }
+  .metric .k { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+  .metric .v { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+  .metric svg { width: 72px; height: 24px; color: var(--accent); }
+  .logline { font: 12px/1.45 var(--mono); color: var(--muted); background: var(--surface-2); border-radius: 6px; padding: 5px 8px; }
+  .why { font-size: 13px; color: var(--bad); }
+  .empty-now { padding: 18px; color: var(--muted); font-size: 14px; }
+
+  /* machines */
+  .machine-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr)); }
+  .machine { padding: 14px 16px; display: grid; gap: 10px; align-content: start; }
+  .machine .head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .machine .title { font-weight: 650; font-size: 15px; flex: 1; }
+  .machine.silent { border-style: dashed; }
+  .res { display: grid; gap: 3px; }
+  .res .line { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+  .res .line span:last-child { color: var(--muted); }
+  .rename { width: 100%; padding: 3px 7px; border-radius: 6px; border: 1px solid var(--accent); background: var(--surface);
+            font-weight: 600; outline: none; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* experiences table */
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .chips { display: flex; gap: 4px; padding: 3px; background: var(--surface-2); border-radius: 9px; }
+  .chip { border: 0; background: transparent; padding: 5px 11px; border-radius: 7px; font-size: 13px; color: var(--muted); font-weight: 500; }
+  .chip.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+  .search { flex: 1; min-width: 160px; max-width: 320px; padding: 7px 11px; border-radius: 8px; border: 1px solid var(--line);
+            background: var(--surface); font-size: 14px; }
+  .table-wrap { overflow: hidden; }
   table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 500; font-size: 12px; }
-  tr.row { cursor: pointer; }
-  tr.row:hover td { background: var(--code); }
-  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px;
-           border: 1px solid currentColor; white-space: nowrap; }
-  .s-done { color: var(--ok); } .s-running { color: var(--run); } .s-failed, .s-died { color: var(--bad); }
-  .s-stopped, .s-new { color: var(--muted); } .s-silent { color: var(--warn); }
-  pre { background: var(--code); padding: 10px; border-radius: 6px; overflow: auto; max-height: 360px;
-        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
-  h3 { font-size: 14px; margin: 16px 0 6px; }
-  .steps td:first-child { width: 20px; }
-  .figures { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-  .figures img { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
-  svg.chart { width: 100%; height: 160px; background: var(--code); border-radius: 6px; }
-  .empty { color: var(--muted); padding: 20px 0; text-align: center; }
+  th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 9px 12px; border-bottom: 1px solid var(--line);
+       background: var(--surface-2); }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; font-size: 14px; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { background: color-mix(in srgb, var(--surface-2) 60%, transparent); }
+  td.pin { width: 34px; padding-right: 0; }
+  td .sub { font-size: 12px; color: var(--muted); }
+  .progress-cell { min-width: 120px; width: 22%; }
+  .table-wrap { overflow-x: auto; }
+  .no-rows { padding: 22px; text-align: center; color: var(--muted); }
+
+  /* drawer */
+  .backdrop { position: fixed; inset: 0; background: rgba(8, 10, 14, .38); z-index: 20; opacity: 0; transition: opacity .18s; }
+  .backdrop.open { opacity: 1; }
+  aside.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100vw); z-index: 21; background: var(--bg);
+                 border-left: 1px solid var(--line); display: flex; flex-direction: column; transform: translateX(100%);
+                 transition: transform .22s ease; }
+  aside.drawer.open { transform: none; }
+  .drawer-head { padding: 14px 18px 0; background: var(--surface); border-bottom: 1px solid var(--line); }
+  .drawer-title { display: flex; align-items: center; gap: 10px; }
+  .drawer-title h3 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -.01em; flex: 1; min-width: 0; }
+  .tabs { display: flex; gap: 2px; margin-top: 10px; overflow-x: auto; }
+  .tab { border: 0; background: transparent; padding: 9px 12px; font-size: 14px; color: var(--muted); font-weight: 500;
+         border-bottom: 2px solid transparent; white-space: nowrap; }
+  .tab.on { color: var(--text); border-bottom-color: var(--accent); }
+  .drawer-body { padding: 18px; overflow-y: auto; flex: 1; display: grid; gap: 16px; align-content: start; }
+  .block { padding: 14px 16px; }
+  .block h4 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .error-box { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); background: color-mix(in srgb, var(--bad) 6%, var(--surface)); }
+  .error-box .meaning { font-weight: 600; color: var(--bad); margin-bottom: 6px; }
+  pre { margin: 0; background: var(--surface-2); padding: 10px 12px; border-radius: 8px; overflow: auto; max-height: 420px;
+        font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+  pre.log { max-height: 65vh; }
+  .steps { display: grid; }
+  .step { display: grid; grid-template-columns: 22px 1fr auto; gap: 2px 10px; padding: 8px 0; border-bottom: 1px solid var(--line); align-items: center; }
+  .step:last-child { border-bottom: 0; }
+  .step .mark { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700;
+                border: 2px solid var(--line); color: var(--faint); }
+  .step.done .mark { background: var(--ok); border-color: var(--ok); color: var(--on-accent); }
+  .step.current .mark { border-color: var(--run); color: var(--run); }
+  .step.broken .mark { background: var(--bad); border-color: var(--bad); color: var(--on-accent); }
+  .step .fn { grid-column: 2 / -1; font-size: 12px; color: var(--faint); font-family: var(--mono); }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 14px; }
+  .kv > :nth-child(odd) { color: var(--muted); }
+  .chart { position: relative; }
+  .chart svg { width: 100%; height: 180px; display: block; }
+  .chart .tip { position: absolute; pointer-events: none; background: var(--text); color: var(--bg); font-size: 12px; padding: 3px 7px;
+                border-radius: 6px; white-space: nowrap; transform: translate(-50%, -120%); }
+  .chart-head { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+  .chart-head b { font-weight: 600; }
+  .figures { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  .figures img { width: 100%; border-radius: 8px; border: 1px solid var(--line); background: #fff; }
   .command { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
-  .command code { flex: 1; background: var(--code); padding: 6px 8px; border-radius: 6px;
-                  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-x: auto; white-space: nowrap; }
-  .settings td:nth-child(2) { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
-  .editor { display: grid; gap: 8px; grid-template-columns: 1fr 1fr auto; align-items: end; }
-  .editor input, .editor select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
-                                   background: var(--panel); color: var(--text); width: 100%; }
-  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; }
+  .command code { flex: 1; background: var(--surface-2); padding: 7px 10px; border-radius: 8px; font-size: 12.5px; overflow-x: auto; white-space: nowrap; }
+  .editor { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+  .editor label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  .editor input { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 14px; }
+  .settings td { font-size: 13px; padding: 7px 10px; }
+  .settings td:nth-child(2) { font-family: var(--mono); word-break: break-all; }
   .warn { color: var(--warn); }
-  @media (max-width: 640px) { .editor { grid-template-columns: 1fr; } }
-  @media (max-width: 640px) { .hide-sm { display: none; } header { flex-wrap: wrap; } }
+  .health-fail { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
+  .health-warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+  .checks { display: grid; gap: 2px; }
+  .check-area { font-size: 12px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; margin-top: 8px; }
+  .check { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 5px 0; font-size: 14px; align-items: start; }
+  .check-mark { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700;
+                color: var(--on-accent); margin-top: 1px; }
+  .check-ok .check-mark { background: var(--ok); } .check-warn .check-mark { background: var(--warn); }
+  .check-fail .check-mark { background: var(--bad); }
+  .check .command { margin: 4px 0 2px; }
+  .loading { color: var(--muted); font-size: 13px; }
+
+  /* navigation between views */
+  .views { display: flex; gap: 2px; padding: 3px; background: var(--surface-2); border-radius: 9px; margin-left: 6px; }
+  .views a { padding: 4px 12px; border-radius: 7px; font-size: 14px; font-weight: 500; color: var(--muted); text-decoration: none; }
+  .views a.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+
+  /* projects */
+  #projectsView { max-width: 1280px; margin: 0 auto; padding: 18px 16px 64px; display: grid; gap: 26px; }
+  #projectsView > *, #projectsView section, .stack > * { min-width: 0; }
+  .stack { display: grid; gap: 26px; min-width: 0; }
+  .crumbs { font-size: 13px; color: var(--muted); }
+  .crumbs a { color: var(--accent); text-decoration: none; }
+  .page-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .page-head h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
+  .lead { margin: -14px 0 0; color: var(--muted); max-width: 760px; }
+  .focus-tag { display: inline-flex; gap: 4px; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600;
+               background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+  .focus-tag a { color: inherit; }
+  .focus-tag.small { font-size: 11px; padding: 1px 8px; }
+  .chip-note { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; background: var(--surface-2); color: var(--muted); }
+  .chip-note.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+  .chip-note.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+  .chip-note.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+  .inline-label { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+  .method-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); }
+  .method { padding: 14px 16px; display: grid; gap: 8px; cursor: pointer; align-content: start; }
+  .method:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .method.is-focus { border: 2px solid var(--accent); padding: 13px 15px; }
+  .method .head { display: flex; gap: 8px; align-items: center; min-width: 0; }
+  .method .name { font-weight: 650; font-size: 16px; flex: 1; }
+  .method-stats { display: flex; gap: 18px; flex-wrap: wrap; }
+  .method-stats > div { display: grid; min-width: 0; max-width: 160px; }
+  .method-stats b { font-size: 18px; font-weight: 650; }
+  .method-stats span { font-size: 12px; color: var(--muted); }
+  .dataset-list { display: flex; gap: 10px; flex-wrap: wrap; }
+  .dataset { padding: 10px 14px; display: grid; gap: 2px; }
+  .project-card { --c: var(--accent); }
+  .map table { font-size: 13px; }
+  .map th, .map td { padding: 7px 10px; white-space: nowrap; }
+  .map th.sortable { cursor: pointer; }
+  .map th.result-col { text-align: right; }
+  .map td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .map td.best { font-weight: 700; }
+  .map .group-end { border-right: 2px solid var(--line); }
+  .ablation th:nth-child(2), .ablation td:nth-child(2) { position: sticky; left: 0; z-index: 1; background: var(--surface);
+                                                         box-shadow: 1px 0 0 var(--line); }
+  .ablation th:nth-child(2) { background: var(--surface-2); }
+  .map td.factor { font-family: var(--mono); font-size: 12px; }
+  .map td.differs { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text); font-weight: 600; }
+  .map tr.is-ref td { box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent); }
+  .map td.corr { cursor: pointer; font-family: var(--mono); font-size: 12px; }
+  .map td.corr.on { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .map td.factor-name { font-family: var(--mono); font-size: 12px; }
+  .dir { border: 0; background: transparent; color: var(--faint); padding: 0 0 0 4px; font-size: 12px; }
+  .map-notes { display: grid; gap: 6px; margin-top: 8px; }
+  .versions { display: grid; gap: 0; }
+  .version { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .version:last-child { border-bottom: 0; }
+  .version-dot { width: 24px; height: 24px; border-radius: 50%; background: var(--surface-2); display: grid; place-items: center; font-size: 12px; font-weight: 700; color: var(--muted); }
+  .version:first-child .version-dot { background: var(--accent); color: var(--on-accent); }
+  svg.scatter { width: 100%; height: auto; display: block; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; margin-top: 6px; }
+  .legend span { display: inline-flex; gap: 6px; align-items: center; }
+  .legend i { width: 12px; height: 3px; border-radius: 2px; display: inline-block; }
+  textarea.code { width: 100%; font: 12px/1.5 var(--mono); padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+                  background: var(--surface-2); color: var(--text); resize: vertical; }
+  .code-block { position: relative; }
+  .code-block pre { padding-right: 64px; }
+  .code-block button { position: absolute; top: 6px; right: 6px; }
+
+  /* onboarding & toast */
+  .onboard { padding: 22px; display: grid; gap: 8px; max-width: 640px; }
+  .onboard h3 { margin: 0; font-size: 17px; }
+  .toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 30; width: min(560px, calc(100vw - 32px));
+           padding: 12px 14px; display: grid; gap: 6px; }
+  .toast .row { display: flex; gap: 8px; align-items: flex-start; }
+  .toast .row > div { flex: 1; font-size: 14px; }
+
+  @media (max-width: 720px) {
+    .hide-sm { display: none; }
+    .focus-grid, .machine-grid { grid-template-columns: minmax(0, 1fr); }
+    .bar-inner { flex-wrap: wrap; gap: 6px 8px; }
+    .brand span.muted { display: none; }
+    .views { order: 4; margin-left: 0; }
+    .btn.primary { padding: 7px 12px; }
+    .live { order: 5; width: 100%; }
+    .editor { grid-template-columns: 1fr; }
+    .summary { display: grid; grid-template-columns: 1fr 1fr; }
+    .stat { min-width: 0; }
+    .search { max-width: none; }
+    td, th { padding-left: 8px; padding-right: 8px; }
+    .progress-cell { min-width: 86px; }
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1>useml monitor</h1>
-  <label><input type="checkbox" id="auto"> auto (15 s)</label>
-  <button class="primary" id="refresh">Refresh</button>
+  <div class="bar-inner">
+    <div class="brand"><span class="logo"><svg viewBox="0 0 32 32"><path d="M7 20l5-6 5 4 8-9" fill="none" stroke="white" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>useml <span class="muted">monitor</span></div>
+    <nav class="views" id="views"><a href="#/" data-view="live">Live</a><a href="#/projects" data-view="projects">Projects</a></nav>
+    <div class="live" id="live"><span class="dot"></span><span id="liveText">connecting…</span></div>
+    <div class="spacer"></div>
+    <select class="select" id="interval" title="Automatic refresh" aria-label="Automatic refresh">
+      <option value="5">auto · 5 s</option><option value="10">auto · 10 s</option>
+      <option value="30">auto · 30 s</option><option value="60">auto · 1 min</option><option value="0">auto off</option>
+    </select>
+    <button class="btn primary" id="refresh" title="Ask every machine for everything now (R)">Refresh</button>
+  </div>
 </header>
-<main>
-  <div id="status" class="muted small"></div>
-  <section class="machines" id="machines"></section>
-  <section class="panel">
-    <table>
-      <thead><tr><th>Experience</th><th>Status</th><th class="hide-sm">Step</th><th>Progress</th><th class="hide-sm">Machine</th><th class="hide-sm">Updated</th></tr></thead>
-      <tbody id="experiences"></tbody>
-    </table>
-    <div id="none" class="empty" hidden>No experience reported yet. Start an agent: <code>useml monitor start</code></div>
+
+<main id="liveView">
+  <div class="summary" id="summary"></div>
+  <section id="nowSection">
+    <h2>In progress <span class="count" id="nowCount"></span></h2>
+    <div class="focus-grid" id="now"></div>
   </section>
-  <section class="panel" id="detail" hidden></section>
+  <section>
+    <h2>Machines <span class="count" id="machineCount"></span></h2>
+    <div class="machine-grid" id="machines"></div>
+  </section>
+  <section id="allSection">
+    <h2>All experiences <span class="count" id="allCount"></span></h2>
+    <div class="toolbar">
+      <div class="chips" id="filters"></div>
+      <input class="search" id="search" type="search" placeholder="Search a name, a step, a machine…" aria-label="Search">
+    </div>
+    <div class="card table-wrap">
+      <table>
+        <thead><tr><th></th><th>Experience</th><th>Status</th><th class="progress-cell">Progress</th><th class="hide-sm">Machine</th><th class="hide-sm">Updated</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="no-rows" id="noRows" hidden></div>
+    </div>
+  </section>
 </main>
+<main id="projectsView" hidden></main>
+
+<div class="backdrop" id="backdrop" hidden></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <div class="drawer-title"><h3 class="ellipsis" id="drawerTitle"></h3><span id="drawerPill"></span>
+      <button class="icon-btn" id="drawerClose" title="Close (Esc)" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>
+    <div class="small muted" id="drawerSub"></div>
+    <div class="tabs" id="tabs"></div>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+<div class="card toast" id="toast" hidden></div>
+
 <script>
 "use strict";
-let state = null, selected = null, busy = false, timer = null;
-const $ = (id) => document.getElementById(id);
+// ── preferences, kept in this browser only ──────────────────────────────────
+const prefs = {
+  get(key, fallback) {
+    try { const raw = localStorage.getItem(`useml.${key}`); return raw === null ? fallback : JSON.parse(raw); }
+    catch (error) { return fallback; }
+  },
+  set(key, value) { try { localStorage.setItem(`useml.${key}`, JSON.stringify(value)); } catch (error) { /* private mode */ } },
+};
+let names = prefs.get("names", {});              // alias -> name shown in this browser
+let pins = new Set(prefs.get("pins", []));       // "alias::experience"
+let interval = prefs.get("interval", 10);        // seconds; 0 = off
+let filter = prefs.get("filter", "all");
+let query = "";
+let state = null, lastOk = 0, lastError = null, busy = false, timer = null;
+let details = {};                                // "alias::name" -> heavy experience
+let setups = {};                                 // alias -> setup
+let route = null, activeTab = "overview", renaming = null, shownSetup = null;
 
+const $ = (id) => document.getElementById(id);
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (value === undefined || value === null || value === false) continue;
     if (key === "class") node.className = value;
-    else if (key === "onclick") node.addEventListener("click", value);
+    else if (key === "style" && typeof value === "object") Object.assign(node.style, value);
+    else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
     else node.setAttribute(key, value);
   }
-  for (const child of children.flat()) {
-    if (child === null || child === undefined) continue;
+  for (const child of children.flat(Infinity)) {
+    if (child === null || child === undefined || child === false) continue;
     node.append(child instanceof Node ? child : document.createTextNode(String(child)));
   }
   return node;
 }
+function svgIcon(path, extra = "") {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.innerHTML = `<path d="${path}" fill="${extra || "none"}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+  return svg;
+}
+const STAR = "M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.9l-5.25 2.7 1-5.8L3.5 9.7l5.9-.9z";
+const PEN = "M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4";
+
+// ── formatting ──────────────────────────────────────────────────────────────
 function ago(seconds) {
-  if (seconds === null || seconds === undefined) return "—";
+  if (seconds === null || seconds === undefined || isNaN(seconds)) return "—";
+  seconds = Math.max(0, seconds);
+  if (seconds < 5) return "just now";
   if (seconds < 90) return `${Math.round(seconds)} s ago`;
   if (seconds < 5400) return `${Math.round(seconds / 60)} min ago`;
   if (seconds < 172800) return `${(seconds / 3600).toFixed(1)} h ago`;
   return `${Math.round(seconds / 86400)} d ago`;
 }
 function duration(seconds) {
-  if (!seconds && seconds !== 0) return "";
+  if (seconds === null || seconds === undefined) return "";
   if (seconds < 90) return `${Math.round(seconds)} s`;
   if (seconds < 5400) return `${Math.round(seconds / 60)} min`;
   return `${(seconds / 3600).toFixed(1)} h`;
 }
 function bytes(value) {
-  if (!value && value !== 0) return "?";
+  if (value === null || value === undefined) return "?";
   const units = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
   while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
   return `${value.toFixed(i ? 1 : 0)} ${units[i]}`;
 }
-function bar(fraction) {
-  const span = el("span"); span.style.width = `${Math.max(0, Math.min(1, fraction)) * 100}%`;
-  return el("div", {class: "bar"}, span);
+function number(value) {
+  if (typeof value !== "number" || !isFinite(value)) return String(value);
+  const size = Math.abs(value);
+  if (size !== 0 && (size < 1e-3 || size >= 1e6)) return value.toExponential(2);
+  if (size >= 1000) return Math.round(value).toLocaleString();
+  return String(parseFloat(value.toPrecision(4)));
+}
+function meter(fraction, color, thick) {
+  const fill = el("i"); fill.style.width = `${Math.max(0, Math.min(1, fraction || 0)) * 100}%`;
+  const node = el("div", {class: `meter${thick ? " thick" : ""}`}, fill);
+  if (color) node.style.setProperty("--c", color);
+  return node;
+}
+function load(fraction) { return fraction > .9 ? "var(--bad)" : fraction > .75 ? "var(--warn)" : "var(--accent)"; }
+
+const LABELS = {running: "Running", done: "Done", failed: "Failed", died: "Died", stopped: "Stopped",
+                new: "Waiting", silent: "No signal"};
+function pill(status) { return el("span", {class: `pill st-${status}`}, LABELS[status] || status); }
+
+// ── the model ───────────────────────────────────────────────────────────────
+const SILENT_AFTER = 180;
+function machineName(machine) {
+  const info = machine.snapshot.machine || {};
+  return names[machine.alias] || info.label || machine.alias;
 }
 function statusOf(experience, machine) {
   // A running experience on a machine that stopped talking is "silent", not "running".
-  if (experience.status === "running" && machine.polled_age > 180) return "silent";
+  if (experience.status === "running" && machine.polled_age > SILENT_AFTER) return "silent";
   return experience.status || "new";
 }
-
-async function call(path, options = {}) {
-  const response = await fetch(path, {credentials: "same-origin", cache: "no-store", ...options});
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-  return response.json();
-}
-async function load() { state = await call("api/state"); render(); }
-async function refresh() {
-  if (busy) return; busy = true; $("refresh").disabled = true;
-  $("status").textContent = "asking the machines…";
-  try {
-    state = await call("api/refresh", {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"});
-    render();
-  } catch (error) { $("status").textContent = `refresh failed: ${error.message}`; }
-  busy = false; $("refresh").disabled = false;
-}
-
-function render() {
-  const machines = state.machines || [];
-  $("status").textContent = machines.length
-    ? `${machines.length} machine(s) · page updated ${new Date().toLocaleTimeString()}`
-    : "no machine connected yet";
-  const cards = $("machines"); cards.replaceChildren();
-  const rows = $("experiences"); rows.replaceChildren();
-  let count = 0;
-  for (const machine of machines) {
-    const info = machine.snapshot.machine || {};
-    const silent = machine.polled_age > 180;
-    const card = el("div", {class: "panel machine"},
-      el("h2", {}, info.alias || machine.alias,
-        el("span", {class: `badge ${silent ? "s-silent" : "s-done"}`}, silent ? `silent ${ago(machine.polled_age)}` : "connected")),
-      el("div", {class: "muted small"}, `snapshot ${ago(machine.age)}`, info.useml ? ` · useml ${info.useml}` : ""));
-    if (machine.snapshot.setup) {
-      card.append(el("button", {style: "margin-top:8px", onclick: () => { selected = `setup::${machine.alias}`; renderDetail(); }}, "useml setup"));
-    }
-    for (const gpu of info.gpus || []) {
-      card.append(el("div", {class: "small"}, `GPU ${gpu.index} · ${gpu.name} · ${gpu.util}% · ${bytes(gpu.mem_used)} / ${bytes(gpu.mem_total)}`),
-                  bar(gpu.mem_total ? gpu.mem_used / gpu.mem_total : 0));
-    }
-    if (info.ram) card.append(el("div", {class: "small"}, `RAM ${bytes(info.ram.total - info.ram.available)} / ${bytes(info.ram.total)}`),
-                              bar((info.ram.total - info.ram.available) / info.ram.total));
-    for (const disk of info.disks || []) {
-      card.append(el("div", {class: "small"}, `disk ${disk.label}: ${bytes(disk.free)} free of ${bytes(disk.total)}`),
-                  bar(1 - disk.free / disk.total));
-    }
-    cards.append(card);
+const PROBLEM = new Set(["failed", "died", "silent"]);
+function items() {
+  const out = [];
+  for (const machine of state?.machines || []) {
     for (const experience of machine.snapshot.experiences || []) {
-      count++;
-      const status = statusOf(experience, machine);
-      const progress = experience.progress;
-      const fraction = experience.total ? experience.done / experience.total : 0;
       const key = `${machine.alias}::${experience.name}`;
-      rows.append(el("tr", {class: "row", onclick: () => { selected = key; renderDetail(); }},
-        el("td", {}, experience.name),
-        el("td", {}, el("span", {class: `badge s-${status}`}, status)),
-        el("td", {class: "hide-sm"}, experience.current_step || ""),
-        el("td", {}, `${experience.done || 0}/${experience.total || 0}`,
-           progress ? el("div", {class: "muted small"}, `${progress[0]}/${progress[1]} ${progress[2] || ""}`) : null,
-           bar(fraction)),
-        el("td", {class: "hide-sm"}, info.alias || machine.alias),
-        el("td", {class: "hide-sm muted small"}, experience.updated ? ago(state.now - experience.updated) : "")));
+      out.push({key, machine, experience, status: statusOf(experience, machine),
+                updated: experience.updated ? state.now - experience.updated : null});
     }
   }
-  $("none").hidden = count > 0;
-  renderDetail();
+  return out;
+}
+const RANK = {running: 0, silent: 1, failed: 2, died: 2, new: 3, stopped: 4, done: 5};
+function byActivity(a, b) {
+  return (RANK[a.status] ?? 9) - (RANK[b.status] ?? 9) || (a.updated ?? 1e12) - (b.updated ?? 1e12);
+}
+function latestMetrics(experience) {
+  // The current step's curves, else the last step that has some.
+  const metrics = experience.metrics || {};
+  const steps = Object.keys(metrics);
+  if (!steps.length) return null;
+  const step = steps.includes(experience.current_step) ? experience.current_step : steps[steps.length - 1];
+  const points = metrics[step];
+  const keys = [...new Set(points.flatMap((p) => Object.keys(p)).filter((k) => k !== "step"))];
+  return {step, points, keys};
+}
+
+// ── talking to the dashboard ────────────────────────────────────────────────
+async function call(path, options = {}) {
+  const response = await fetch(path, {credentials: "same-origin", cache: "no-store", ...options});
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText || ""}`.trim());
+  return response.json();
+}
+function post(path, body) {
+  return call(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+}
+async function tick(full) {
+  if (busy) return;
+  busy = true; clearTimeout(timer); renderLive(); $("refresh").disabled = full;
+  try {
+    state = await post("api/refresh?light=1", {full});
+    lastOk = Date.now(); lastError = null;
+    if (full) { details = {}; setups = {}; }
+    render();
+    if (route) loadRoute(full);
+    if (view.kind !== "live" && (full || Date.now() - projectsLoaded > 60000)) loadProjectsView();
+  } catch (error) { lastError = error.message; }
+  busy = false; $("refresh").disabled = false; renderLive(); schedule();
+}
+function schedule() {
+  clearTimeout(timer);
+  if (interval > 0 && !document.hidden) timer = setTimeout(() => tick(false), interval * 1000);
+}
+async function start() {
+  try { state = await call("api/state?light=1"); lastOk = Date.now(); render(); }
+  catch (error) { lastError = error.message; renderLive(); }
+  readRoute();
+  tick(false);
+}
+
+// ── the live indicator and the title ────────────────────────────────────────
+function renderLive() {
+  const live = $("live");
+  live.className = "live";
+  const since = lastOk ? ago((Date.now() - lastOk) / 1000) : "never";
+  let text;
+  if (lastError) { live.classList.add("err"); text = `offline (${lastError}) · retrying · updated ${since}`; }
+  else if (busy) { live.classList.add("busy"); text = "updating…"; }
+  else if (!interval) { text = `auto off · updated ${since}`; }
+  else if (document.hidden) { text = "paused"; }
+  else { live.classList.add("on"); text = `live · updated ${since}`; }
+  $("liveText").textContent = text;
+}
+setInterval(renderLive, 1000);
+
+// ── rendering ───────────────────────────────────────────────────────────────
+function render() {
+  if (!state) return;
+  const all = items();
+  const running = all.filter((i) => i.status === "running").length;
+  const problems = all.filter((i) => PROBLEM.has(i.status) && (i.updated === null || i.updated < 86400)).length;
+  document.title = `${running ? `▶ ${running} · ` : ""}${problems ? `⚠ ${problems} · ` : ""}useml monitor`;
+  renderSummary(all);
+  renderNow(all);
+  if (renaming === null) renderMachines(all);                    // never under the user's typing
+  renderTable(all);
+}
+
+function renderSummary(all) {
+  const machines = state.machines || [];
+  const online = machines.filter((m) => m.polled_age <= SILENT_AFTER).length;
+  const count = (test) => all.filter(test).length;
+  const stat = (value, label, status, target) => el("button", {class: "card stat", onclick: () => {
+      setFilter(target); $("allSection").scrollIntoView({behavior: "smooth", block: "start"}); }},
+    el("b", {}, value), el("span", {}, status ? el("span", {class: `dot`, style: {background: `var(--${status})`}}) : null, label));
+  $("summary").replaceChildren(
+    stat(count((i) => i.status === "running"), "running", "run", "running"),
+    stat(count((i) => PROBLEM.has(i.status)), "need attention", "bad", "problems"),
+    stat(count((i) => i.status === "done"), "done", "ok", "done"),
+    stat(`${online}/${machines.length}`, "machines online", null, "all"));
+}
+
+function sparkline(points, key) {
+  const values = points.map((p) => p[key]).filter((v) => typeof v === "number" && isFinite(v));
+  if (values.length < 2) return null;
+  const min = Math.min(...values), max = Math.max(...values), w = 72, h = 24;
+  const path = values.map((v, i) => `${i ? "L" : "M"}${(i / (values.length - 1) * (w - 2) + 1).toFixed(1)},${(h - 2 - (max === min ? .5 : (v - min) / (max - min)) * (h - 4)).toFixed(1)}`).join(" ");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.innerHTML = `<path d="${path}" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>`;
+  return svg;
+}
+function lastValue(points, key) {
+  for (let i = points.length - 1; i >= 0; i--) if (typeof points[i][key] === "number") return points[i][key];
+  return null;
+}
+function progressBlock(experience, status) {
+  const progress = experience.progress;
+  const color = `var(--${status === "running" ? "run" : PROBLEM.has(status) ? "bad" : status === "done" ? "ok" : "idle"})`;
+  if (Array.isArray(progress) && progress[1] && status === "running") {
+    const [i, n, label] = progress;
+    return el("div", {},
+      el("div", {class: "progress-line"}, el("span", {class: "ellipsis"}, el("b", {}, experience.current_step || "step"), label ? ` · ${label}` : ""),
+         el("span", {class: "muted"}, `${number(i)} / ${number(n)} · ${Math.floor(i / n * 100)}%`)),
+      meter(i / n, color, true));
+  }
+  const total = experience.total || 0, done = experience.done || 0;
+  return el("div", {},
+    el("div", {class: "progress-line"}, el("span", {class: "ellipsis"}, experience.current_step && status === "running" ? el("b", {}, experience.current_step) : "steps"),
+       el("span", {class: "muted"}, `${done} / ${total} steps`)),
+    meter(total ? done / total : 0, color, true));
+}
+function pinButton(key) {
+  const pinned = pins.has(key);
+  const button = el("button", {class: `icon-btn${pinned ? " pinned" : ""}`, title: pinned ? "Unpin" : "Pin to “In progress”",
+    "aria-label": pinned ? "Unpin" : "Pin", onclick: (event) => {
+      event.stopPropagation();
+      pins.has(key) ? pins.delete(key) : pins.add(key);
+      prefs.set("pins", [...pins]); render();
+    }}, svgIcon(STAR, pinned ? "currentColor" : ""));
+  return button;
+}
+function focusCard(item) {
+  const {machine, experience, status, key} = item;
+  const card = el("article", {class: `card focus st-${status}`, tabindex: "0",
+    onclick: () => openExperience(item), onkeydown: (e) => { if (e.key === "Enter") openExperience(item); }},
+    el("div", {class: "head"}, el("div", {class: "name ellipsis", title: experience.name}, experience.name), pill(status), pinButton(key)),
+    el("div", {class: "where"}, el("span", {}, machineName(machine)), el("span", {class: "faint"}, "·"),
+       el("span", {}, item.updated === null ? "" : `updated ${ago(item.updated)}`)),
+    progressBlock(experience, status));
+  const metrics = latestMetrics(experience);
+  if (metrics && metrics.keys.length) {
+    card.append(el("div", {class: "metrics-row"}, metrics.keys.slice(0, 3).map((k) =>
+      el("div", {class: "metric"}, el("span", {class: "k"}, k), el("span", {class: "v"}, number(lastValue(metrics.points, k))), sparkline(metrics.points, k)))));
+  }
+  if (experience.error && (experience.error.meaning || experience.error.message)) {
+    const last = (experience.error.message || "").trim().split("\n").pop();
+    card.append(el("div", {class: "why ellipsis", title: last}, experience.error.meaning || last));
+  } else if (status === "silent") {
+    card.append(el("div", {class: "why", style: {color: "var(--warn)"}}, `The machine has not answered for ${ago(machine.polled_age).replace(" ago", "")}.`));
+  }
+  const log = (experience.log || []).filter((line) => line.trim());
+  if (log.length && status === "running") card.append(el("div", {class: "logline ellipsis", title: log[log.length - 1]}, log[log.length - 1]));
+  return card;
+}
+function renderNow(all) {
+  const shown = all.filter((i) => i.status === "running" || pins.has(i.key) ||
+                                  (PROBLEM.has(i.status) && (i.updated === null || i.updated < 86400))).sort(byActivity);
+  $("nowCount").textContent = shown.length ? String(shown.length) : "";
+  const grid = $("now");
+  if (!shown.length) {
+    grid.replaceChildren(el("div", {class: "card empty-now"},
+      (state.machines || []).length ? "Nothing is running right now. Pin an experience (☆) to keep it here."
+                                     : "No machine yet."));
+    return;
+  }
+  grid.replaceChildren(...shown.map(focusCard));
+}
+
+function machineCard(machine, all) {
+  const info = machine.snapshot.machine || {};
+  const silent = machine.polled_age > SILENT_AFTER;
+  const name = machineName(machine);
+  const runningHere = all.filter((i) => i.machine === machine && i.status === "running").length;
+  const card = el("article", {class: `card machine${silent ? " silent" : ""}`});
+  const title = renaming === machine.alias
+    ? el("input", {class: "rename", value: name, "aria-label": "Machine name",
+        onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { renaming = null; render(); } },
+        onblur: (e) => finishRename(machine, e.target.value)})
+    : el("div", {class: "title ellipsis", title: name}, name);
+  card.append(el("div", {class: "head"},
+    el("span", {class: "dot", style: {background: silent ? "var(--warn)" : "var(--ok)"}}), title,
+    renaming === machine.alias ? null : el("button", {class: "icon-btn", title: "Rename", "aria-label": "Rename",
+      onclick: () => { renaming = machine.alias; renderMachines(items()); const input = $("machines").querySelector("input.rename"); input?.focus(); input?.select(); }}, svgIcon(PEN))));
+  card.append(el("div", {class: "small muted"},
+    silent ? el("span", {class: "warn"}, `no signal for ${ago(machine.polled_age).replace(" ago", "")}`) : `online · ${runningHere} running`,
+    name !== machine.alias ? ` · ${machine.alias}` : "", info.useml ? ` · useml ${info.useml}` : ""));
+  const res = el("div", {class: "res"});
+  for (const gpu of info.gpus || []) {
+    const fraction = gpu.mem_total ? gpu.mem_used / gpu.mem_total : 0;
+    res.append(el("div", {class: "line"}, el("span", {class: "ellipsis"}, `GPU ${gpu.index} · ${gpu.name}`),
+                  el("span", {}, `${gpu.util}% · ${bytes(gpu.mem_used)} / ${bytes(gpu.mem_total)}`)), meter(fraction, load(fraction)));
+  }
+  if (info.ram && info.ram.total) {
+    const used = info.ram.total - info.ram.available, fraction = used / info.ram.total;
+    res.append(el("div", {class: "line"}, el("span", {}, "RAM"), el("span", {}, `${bytes(used)} / ${bytes(info.ram.total)}`)), meter(fraction, load(fraction)));
+  }
+  for (const disk of info.disks || []) {
+    const fraction = disk.total ? 1 - disk.free / disk.total : 0;
+    res.append(el("div", {class: "line"}, el("span", {}, `Disk · ${disk.label}`), el("span", {}, `${bytes(disk.free)} free`)), meter(fraction, load(fraction)));
+  }
+  if (Array.isArray(info.load)) res.append(el("div", {class: "line"}, el("span", {}, "Load"), el("span", {}, info.load.map((v) => v.toFixed(1)).join(" · "))));
+  if (res.childElementCount) card.append(res);
+  const actions = el("div", {class: "actions"});
+  if (machine.snapshot.has_setup || machine.snapshot.setup) {
+    const health = machine.snapshot.health || {};
+    const label = health.fail ? `✕ ${health.fail} to fix` : health.warn ? `! ${health.warn} to look at` : "✓ setup OK";
+    const tone = health.fail ? "fail" : health.warn ? "warn" : "ok";
+    actions.append(el("button", {class: `btn small health health-${tone}`, title: "useml on this machine: health, state and settings",
+      onclick: () => go(`#/setup/${encodeURIComponent(machine.alias)}`)}, `useml setup · ${label}`));
+  }
+  if (silent) actions.append(el("button", {class: "btn small ghost", title: "Remove it from this dashboard; a running agent reappears",
+    onclick: async () => { await post("api/forget", {machine: machine.alias}).catch(() => null); tick(false); }}, "Forget"));
+  if (actions.childElementCount) card.append(actions);
+  return card;
+}
+function finishRename(machine, value) {
+  if (renaming !== machine.alias) return;
+  renaming = null;
+  const text = value.trim(), info = machine.snapshot.machine || {};
+  if (!text || text === (info.label || machine.alias)) delete names[machine.alias];
+  else names[machine.alias] = text;
+  prefs.set("names", names);
+  render();
+  if (text && text !== (info.label || "")) {
+    toast(`Shown as “${text}” in this browser. To show it on every device, run on the machine:`,
+          `useml settings set monitor.label ${quote(text)}`);
+  }
+}
+function renderMachines(all) {
+  const machines = state.machines || [];
+  $("machineCount").textContent = machines.length ? String(machines.length) : "";
+  if (!machines.length) {
+    $("machines").replaceChildren(el("div", {class: "card onboard"},
+      el("h3", {}, "Connect a first machine"),
+      el("div", {class: "muted small"}, "On the machine (no port to open, the agent only makes outgoing requests):"),
+      commandLine('pip install -U "useml[monitor]"'),
+      commandLine(state.space ? "hf auth login" : "useml monitor serve"),
+      state.space ? commandLine("useml monitor start") : null,
+      el("div", {class: "muted small"}, "useml docs monitor — the full guide.")));
+    return;
+  }
+  $("machines").replaceChildren(...machines.map((m) => machineCard(m, all)));
+}
+
+const FILTERS = [["all", "All"], ["running", "Running"], ["problems", "Need attention"], ["done", "Done"]];
+function setFilter(value) { filter = value; prefs.set("filter", value); render(); }
+function renderTable(all) {
+  $("filters").replaceChildren(...FILTERS.map(([value, label]) =>
+    el("button", {class: `chip${filter === value ? " on" : ""}`, onclick: () => setFilter(value)}, label)));
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = all.filter((i) => filter === "all" || (filter === "problems" ? PROBLEM.has(i.status) : i.status === filter))
+    .filter((i) => {
+      const text = `${i.experience.name} ${i.experience.current_step || ""} ${machineName(i.machine)} ${i.machine.alias} ${LABELS[i.status]}`.toLowerCase();
+      return words.every((w) => text.includes(w));
+    })
+    .sort((a, b) => (pins.has(b.key) - pins.has(a.key)) || byActivity(a, b));
+  $("allCount").textContent = all.length ? String(all.length) : "";
+  $("rows").replaceChildren(...rows.map((item) => {
+    const {experience, status, machine, key} = item;
+    const total = experience.total || 0, done = experience.done || 0;
+    const progress = Array.isArray(experience.progress) && experience.progress[1] && status === "running" ? experience.progress : null;
+    return el("tr", {onclick: () => openExperience(item)},
+      el("td", {class: "pin"}, pinButton(key)),
+      el("td", {}, el("div", {}, experience.name),
+         experience.current_step && status === "running" ? el("div", {class: "sub"}, experience.current_step) : null),
+      el("td", {}, pill(status)),
+      el("td", {class: "progress-cell"},
+         el("div", {class: "sub", style: {marginBottom: "4px"}}, progress ? `step ${done + 1}/${total} · ${Math.floor(progress[0] / progress[1] * 100)}%` : `${done}/${total} steps`),
+         meter(progress ? progress[0] / progress[1] : total ? done / total : 0,
+               `var(--${status === "running" ? "run" : PROBLEM.has(status) ? "bad" : status === "done" ? "ok" : "idle"})`)),
+      el("td", {class: "hide-sm"}, machineName(machine)),
+      el("td", {class: "hide-sm muted small"}, item.updated === null ? "" : ago(item.updated)));
+  }));
+  const none = $("noRows");
+  none.hidden = rows.length > 0;
+  none.textContent = all.length ? "No experience matches." : "No experience reported yet.";
+}
+
+// ── the drawer: one experience, or one machine's setup ─────────────────────
+function go(hash) { if (location.hash === hash) readRoute(); else location.hash = hash; }
+function openExperience(item) {
+  go(`#/exp/${encodeURIComponent(item.machine.alias)}/${encodeURIComponent(item.experience.name)}`);
+}
+function closeDrawer() { history.replaceState(null, "", location.pathname + location.search + viewHash()); readRoute(); }
+function readRoute() {
+  const parts = location.hash.replace(/^#\/?/, "").split("/").map(decodeURIComponent);
+  const previous = route ? JSON.stringify(route) : null;
+  if (parts[0] === "exp" && parts.length >= 3) route = {kind: "exp", alias: parts[1], name: parts.slice(2).join("/")};
+  else if (parts[0] === "setup" && parts[1]) route = {kind: "setup", alias: parts[1]};
+  else if (parts[0] === "run" && parts[2]) {
+    route = {kind: "run", project: parts[1], id: parts[2]};
+    if (view.kind === "live") setView({kind: "project", name: parts[1]});
+  } else if (parts[0] === "new" && parts[1]) {
+    route = {kind: "new", project: parts[1], what: parts[2] || "method"};
+    if (view.kind === "live") setView({kind: "project", name: parts[1]});
+  } else {
+    route = null;
+    if (parts[0] === "projects" && parts[1]) setView(parts[2] ? {kind: "method", name: parts[1], method: parts.slice(2).join("/")} : {kind: "project", name: parts[1]});
+    else if (parts[0] === "projects") setView({kind: "projects"});
+    else setView({kind: "live"});
+  }
+  if (JSON.stringify(route) !== previous) activeTab = "overview";
+  const open = !!route;
+  $("drawer").classList.toggle("open", open);
+  $("drawer").setAttribute("aria-hidden", String(!open));
+  $("backdrop").hidden = !open;
+  requestAnimationFrame(() => $("backdrop").classList.toggle("open", open));
+  document.body.style.overflow = open ? "hidden" : "";
+  if (open) loadRoute(false);
+}
+async function loadRoute(force) {
+  if (!route || !state) return;
+  if (route.kind === "run" || route.kind === "new") {
+    if (!projectPage || projectPage.project.name !== route.project) await loadProject(route.project);
+    renderDrawer();
+    return;
+  }
+  renderDrawer();
+  try {
+    if (route.kind === "exp") {
+      const key = `${route.alias}::${route.name}`;
+      if (force || !details[key]) {
+        details[key] = await call(`api/experience?machine=${encodeURIComponent(route.alias)}&name=${encodeURIComponent(route.name)}`);
+      }
+    } else if (force || !setups[route.alias]) {
+      setups[route.alias] = await call(`api/setup?machine=${encodeURIComponent(route.alias)}`);
+    }
+  } catch (error) { /* shown as missing */ }
+  renderDrawer();
+}
+function renderDrawer() {
+  if (!route || !state) return;
+  if (route.kind === "run") return renderRun();
+  if (route.kind === "new") return renderComposer();
+  const machine = (state.machines || []).find((m) => m.alias === route.alias);
+  const body = $("drawerBody");
+  if (!machine) {
+    $("drawerTitle").textContent = route.name || route.alias; $("drawerPill").replaceChildren(); $("drawerSub").textContent = "";
+    $("tabs").replaceChildren(); body.replaceChildren(el("div", {class: "loading"}, "This machine is not connected to the dashboard."));
+    return;
+  }
+  if (route.kind === "setup") return renderSetup(machine);
+  const light = (machine.snapshot.experiences || []).find((e) => e.name === route.name);
+  if (!light) { body.replaceChildren(el("div", {class: "loading"}, "This experience is no longer reported.")); return; }
+  // The light snapshot is fresh (status, steps, log, curves); the heavy parts come from the last full one.
+  const experience = {...(details[`${route.alias}::${route.name}`] || {}), ...light};
+  const status = statusOf(experience, machine);
+  $("drawerTitle").textContent = experience.name;
+  $("drawerTitle").title = experience.name;
+  $("drawerPill").replaceChildren(pill(status));
+  $("drawerSub").textContent = `${machineName(machine)} · updated ${experience.updated ? ago(state.now - experience.updated) : "—"}`;
+  const tabs = [["overview", "Overview"]];
+  if (Object.keys(experience.metrics || {}).length) tabs.push(["metrics", "Curves"]);
+  if (Object.keys(experience.results || {}).length || (experience.figures || []).length) tabs.push(["outputs", "Results"]);
+  if ((experience.configs || []).length) tabs.push(["configs", "Configs"]);
+  if ((experience.log || []).length) tabs.push(["log", "Log"]);
+  if (!tabs.some(([k]) => k === activeTab)) activeTab = "overview";
+  $("tabs").replaceChildren(...tabs.map(([key, label]) => el("button", {class: `tab${activeTab === key ? " on" : ""}`,
+    onclick: () => { activeTab = key; renderDrawer(); body.scrollTop = 0; }}, label)));
+  const logPre = body.querySelector("pre.log");
+  const stick = logPre ? logPre.scrollTop + logPre.clientHeight >= logPre.scrollHeight - 8 : true;
+  const scroll = body.scrollTop;
+  body.replaceChildren(...drawerContent(experience, status, machine));
+  body.scrollTop = scroll;
+  const newLog = body.querySelector("pre.log");
+  if (newLog && stick) newLog.scrollTop = newLog.scrollHeight;
+}
+function block(title, ...children) { return el("div", {class: "card block"}, title ? el("h4", {}, title) : null, ...children); }
+function drawerContent(experience, status, machine) {
+  const out = [];
+  if (activeTab === "overview") {
+    if (experience.error && (experience.error.meaning || experience.error.message)) {
+      out.push(el("div", {class: "card block error-box"}, el("h4", {}, "Why it stopped"),
+        experience.error.meaning ? el("div", {class: "meaning"}, experience.error.meaning) : null,
+        experience.error.message ? el("pre", {}, experience.error.message) : null));
+    }
+    out.push(block(null, progressBlock(experience, status)));
+    const metrics = latestMetrics(experience);
+    if (metrics && metrics.keys.length) {
+      out.push(block(`Latest values · ${metrics.step}`, el("div", {class: "metrics-row"}, metrics.keys.map((k) =>
+        el("div", {class: "metric"}, el("span", {class: "k"}, k), el("span", {class: "v"}, number(lastValue(metrics.points, k))), sparkline(metrics.points, k))))));
+    }
+    if ((experience.steps || []).length) {
+      out.push(block("Steps", el("div", {class: "steps"}, experience.steps.map((step, index) => {
+        const here = !step.done && step.name === experience.current_step;
+        const current = here && status === "running", broken = here && PROBLEM.has(status);
+        return el("div", {class: `step${step.done ? " done" : ""}${current ? " current" : ""}${broken ? " broken" : ""}`},
+          el("span", {class: "mark"}, step.done ? "✓" : current ? "▶" : broken ? "!" : String(index + 1)),
+          el("span", {}, step.name, step.output ? el("span", {class: "faint small"}, ` · ${step.output}`) : null),
+          el("span", {class: "small muted"}, step.done ? duration(step.seconds) : current ? "running" : broken ? "stopped here" : ""),
+          step.function ? el("span", {class: "fn"}, step.function) : null);
+      }))));
+    }
+    if ((experience.datasets || []).length) out.push(block("Data read", el("div", {class: "small"}, experience.datasets.join(", "))));
+    const log = (experience.log || []).filter((l) => l.trim()).slice(-6);
+    if (log.length) out.push(block("Last log lines", el("pre", {}, log.join("\n"))));
+  } else if (activeTab === "metrics") {
+    for (const [step, points] of Object.entries(experience.metrics || {})) {
+      const keys = [...new Set(points.flatMap((p) => Object.keys(p)).filter((k) => k !== "step"))];
+      const charts = keys.map((k) => chart(points, k)).filter(Boolean);
+      if (charts.length) out.push(block(`Step · ${step}`, el("div", {style: {display: "grid", gap: "18px"}}, charts)));
+    }
+    if (!out.length) out.push(el("div", {class: "loading"}, "Not enough points to draw a curve yet."));
+  } else if (activeTab === "outputs") {
+    if (!details[`${machine.alias}::${experience.name}`]) out.push(el("div", {class: "loading"}, "Loading the latest results…"));
+    for (const [step, value] of Object.entries(experience.results || {})) out.push(block(`Result · ${step}`, el("pre", {}, JSON.stringify(value, null, 2))));
+    if ((experience.figures || []).length) {
+      out.push(block("Figures", el("div", {class: "figures"}, experience.figures.map((figure) => {
+        const img = el("img", {alt: `${figure.step} ${figure.name}`, loading: "lazy"});
+        img.src = `data:image/png;base64,${figure.png}`;
+        return el("figure", {style: {margin: 0}}, img, el("figcaption", {class: "tiny muted"}, `${figure.step} · ${figure.name}`));
+      }))));
+    }
+  } else if (activeTab === "configs") {
+    for (const config of experience.configs || []) {
+      out.push(block(`${config.name} · cfg:${config.hash}`, el("pre", {}, config.yaml || JSON.stringify(config.overrides || {}, null, 2))));
+    }
+  } else if (activeTab === "log") {
+    out.push(el("pre", {class: "log"}, (experience.log || []).join("\n")));
+  }
+  return out;
 }
 
 function chart(points, name) {
-  const values = points.map((p) => p[name]).filter((v) => typeof v === "number");
-  if (values.length < 2) return null;
-  const xs = points.filter((p) => typeof p[name] === "number").map((p) => p.step);
-  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...values), maxY = Math.max(...values);
-  const w = 600, h = 160, pad = 24;
-  const path = xs.map((x, i) => {
-    const px = pad + (maxX === minX ? 0 : (x - minX) / (maxX - minX)) * (w - 2 * pad);
-    const py = h - pad - (maxY === minY ? 0.5 : (values[i] - minY) / (maxY - minY)) * (h - 2 * pad);
-    return `${i ? "L" : "M"}${px.toFixed(1)},${py.toFixed(1)}`;
-  }).join(" ");
+  const data = points.filter((p) => typeof p[name] === "number" && isFinite(p[name])).map((p) => [p.step, p[name]]);
+  if (data.length < 2) return null;
+  const xs = data.map((d) => d[0]), ys = data.map((d) => d[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const w = 640, h = 180, left = 8, right = 8, top = 10, bottom = 22;
+  const px = (x) => left + (maxX === minX ? .5 : (x - minX) / (maxX - minX)) * (w - left - right);
+  const py = (y) => top + (1 - (maxY === minY ? .5 : (y - minY) / (maxY - minY))) * (h - top - bottom);
+  const path = data.map(([x, y], i) => `${i ? "L" : "M"}${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(" ");
+  const area = `${path} L${px(maxX).toFixed(1)},${h - bottom} L${px(minX).toFixed(1)},${h - bottom} Z`;
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("class", "chart");
-  svg.innerHTML = `<path d="${path}" fill="none" stroke="currentColor" stroke-width="2"/>`;
-  svg.style.color = "var(--accent)";
-  const label = (text, x, y, anchor) => {
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("preserveAspectRatio", "none");
+  const grid = [0, .5, 1].map((f) => `<line x1="${left}" x2="${w - right}" y1="${top + f * (h - top - bottom)}" y2="${top + f * (h - top - bottom)}" stroke="var(--line)" stroke-width="1"/>`).join("");
+  const [lx, ly] = data[data.length - 1];
+  svg.innerHTML = `${grid}<path d="${area}" fill="var(--accent)" opacity=".08"/>` +
+    `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` +
+    `<circle cx="${px(lx)}" cy="${py(ly)}" r="3.5" fill="var(--accent)"/>` +
+    `<line id="cursor" y1="${top}" y2="${h - bottom}" stroke="var(--faint)" stroke-dasharray="3 3" visibility="hidden"/>`;
+  const axis = (text, x, anchor) => {
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    t.setAttribute("x", x); t.setAttribute("y", y); t.setAttribute("font-size", "11");
-    t.setAttribute("fill", "currentColor"); t.setAttribute("text-anchor", anchor); t.style.color = "var(--muted)";
-    t.textContent = text; svg.append(t);
+    t.setAttribute("x", x); t.setAttribute("y", h - 6); t.setAttribute("font-size", "11"); t.setAttribute("text-anchor", anchor);
+    t.setAttribute("fill", "var(--faint)"); t.textContent = text; svg.append(t);
   };
-  label(maxY.toPrecision(4), 4, 14, "start"); label(minY.toPrecision(4), 4, h - 6, "start");
-  label(`step ${maxX}`, w - 4, h - 6, "end");
-  return el("div", {}, el("div", {class: "small muted"}, name), svg);
+  axis(`step ${number(minX)}`, left, "start"); axis(`step ${number(maxX)}`, w - right, "end");
+  const tip = el("div", {class: "tip", hidden: true});
+  const box = el("div", {class: "chart"}, svg, tip);
+  const cursor = svg.querySelector("#cursor");
+  svg.addEventListener("pointermove", (event) => {
+    const rect = svg.getBoundingClientRect();
+    const x = minX + ((event.clientX - rect.left) / rect.width * w - left) / (w - left - right) * (maxX - minX);
+    let best = data[0];
+    for (const d of data) if (Math.abs(d[0] - x) < Math.abs(best[0] - x)) best = d;
+    cursor.setAttribute("x1", px(best[0])); cursor.setAttribute("x2", px(best[0])); cursor.setAttribute("visibility", "visible");
+    tip.hidden = false; tip.textContent = `step ${number(best[0])} · ${number(best[1])}`;
+    tip.style.left = `${px(best[0]) / w * rect.width}px`; tip.style.top = `${py(best[1]) / h * rect.height}px`;
+  });
+  svg.addEventListener("pointerleave", () => { tip.hidden = true; cursor.setAttribute("visibility", "hidden"); });
+  return el("div", {}, el("div", {class: "chart-head"}, el("b", {}, name),
+    el("span", {class: "muted"}, `last ${number(ly)} · min ${number(minY)} · max ${number(maxY)}`)), box);
 }
 
-function renderDetail() {
-  const panel = $("detail");
-  if (!selected || !state) { panel.hidden = true; return; }
-  if (selected.startsWith("setup::")) { renderSetup(panel, selected.slice(7)); return; }
-  const [alias, name] = selected.split("::");
-  const machine = (state.machines || []).find((m) => m.alias === alias);
-  const experience = machine && (machine.snapshot.experiences || []).find((e) => e.name === name);
-  if (!experience) { panel.hidden = true; return; }
-  panel.hidden = false; panel.replaceChildren();
-  const status = statusOf(experience, machine);
-  panel.append(el("h2", {style: "margin:0;font-size:16px"}, experience.name, " ",
-                  el("span", {class: `badge s-${status}`}, status)),
-               el("div", {class: "muted small"}, `${machine.snapshot.machine?.alias || alias} · snapshot ${ago(machine.age)}`));
-  if (experience.error) {
-    panel.append(el("h3", {}, "Why it stopped"), el("pre", {}, [experience.error.meaning, experience.error.message].filter(Boolean).join("\n\n")));
-  }
-  if (experience.steps) {
-    const table = el("table", {class: "steps"}, el("thead", {}, el("tr", {}, el("th", {}, ""), el("th", {}, "Step"), el("th", {}, "Duration"), el("th", {class: "hide-sm"}, "Function"), el("th", {class: "hide-sm"}, "Output"))));
-    const body = el("tbody");
-    for (const step of experience.steps) {
-      body.append(el("tr", {}, el("td", {}, step.done ? "✓" : step.name === experience.current_step ? "▶" : "·"),
-        el("td", {}, step.name), el("td", {}, duration(step.seconds)),
-        el("td", {class: "hide-sm muted small"}, step.function || ""), el("td", {class: "hide-sm muted small"}, step.output || "")));
-    }
-    table.append(body); panel.append(el("h3", {}, "Steps"), table);
-  }
-  for (const [step, points] of Object.entries(experience.metrics || {})) {
-    const names = [...new Set(points.flatMap((p) => Object.keys(p)).filter((k) => k !== "step"))];
-    const charts = names.map((n) => chart(points, n)).filter(Boolean);
-    if (charts.length) panel.append(el("h3", {}, `Metrics · ${step}`), ...charts);
-  }
-  for (const [step, value] of Object.entries(experience.results || {})) {
-    panel.append(el("h3", {}, `Result · ${step}`), el("pre", {}, JSON.stringify(value, null, 2)));
-  }
-  if ((experience.figures || []).length) {
-    const grid = el("div", {class: "figures"});
-    for (const figure of experience.figures) {
-      const img = el("img", {alt: `${figure.step} ${figure.name}`, loading: "lazy"});
-      img.src = `data:image/png;base64,${figure.png}`;
-      grid.append(el("div", {}, img, el("div", {class: "small muted"}, `${figure.step} · ${figure.name}`)));
-    }
-    panel.append(el("h3", {}, "Figures"), grid);
-  }
-  for (const config of experience.configs || []) {
-    panel.append(el("h3", {}, `Config · ${config.name} (cfg:${config.hash})`),
-                 el("pre", {}, config.yaml || JSON.stringify(config.overrides || {}, null, 2)));
-  }
-  if (experience.datasets && experience.datasets.length) {
-    panel.append(el("h3", {}, "Data"), el("div", {class: "small"}, experience.datasets.join(", ")));
-  }
-  if (experience.log && experience.log.length) {
-    panel.append(el("h3", {}, "Log"), el("pre", {}, experience.log.join("\n")));
-  }
-}
-
+// ── setup, and composing a settings command ─────────────────────────────────
 function quote(text) { return "'" + String(text).split("'").join("'\\''") + "'"; }
 function commandLine(text) {
-  const code = el("code", {}, text);
-  const button = el("button", {onclick: async () => {
+  const button = el("button", {class: "btn small", onclick: async (event) => {
+    event.stopPropagation();
     try { await navigator.clipboard.writeText(text); button.textContent = "copied"; }
     catch (error) { button.textContent = "select it"; }
     setTimeout(() => { button.textContent = "copy"; }, 1500);
   }}, "copy");
-  return el("div", {class: "command"}, code, button);
+  return el("div", {class: "command"}, el("code", {}, text), button);
 }
-function show(value) {
-  if (value === null || value === undefined) return "—";
-  return typeof value === "string" ? value : JSON.stringify(value);
-}
-
-function renderSetup(panel, alias) {
-  const machine = (state.machines || []).find((m) => m.alias === alias);
-  const setup = machine && machine.snapshot.setup;
-  if (!setup) { panel.hidden = true; return; }
-  panel.hidden = false; panel.replaceChildren();
-  panel.append(el("h2", {style: "margin:0;font-size:16px"}, `useml on ${machine.snapshot.machine?.alias || alias}`),
-               el("div", {class: "muted small"}, `useml ${setup.useml} · Python ${setup.python} · snapshot ${ago(machine.age)}`));
-  for (const warning of setup.warnings || []) panel.append(el("p", {class: "warn small"}, `⚠ ${warning}`));
-  if ((setup.suggestions || []).length) {
-    panel.append(el("h3", {}, "Suggested commands"), ...setup.suggestions.map(commandLine));
+const LEVEL_MARK = {ok: "✓", warn: "!", fail: "✕"}, LEVEL_RANK = {fail: 0, warn: 1, ok: 2};
+let showOk = false;
+function renderSetup(machine) {
+  const body = $("drawerBody");
+  const setup = setups[machine.alias];
+  $("drawerTitle").textContent = `useml on ${machineName(machine)}`;
+  $("drawerPill").replaceChildren();
+  $("tabs").replaceChildren();
+  if (!setup || !setup.useml) {
+    $("drawerSub").textContent = "";
+    body.replaceChildren(el("div", {class: "loading"}, setup ? "This machine does not share its setup (group “setup”)." : "Loading…"));
+    return;
   }
-  const facts = el("div", {class: "kv small"});
-  const fact = (key, value) => facts.append(el("div", {class: "muted"}, key), el("div", {}, value));
+  $("drawerSub").textContent = `useml ${setup.useml} · Python ${setup.python} · from the last full refresh`;
+  if (shownSetup === setup && body.querySelector(".editor")) return;  // unchanged: keep what is typed
+  shownSetup = setup;
+  const out = [];
+  const checks = setup.checks || [];
+  if (checks.length) {
+    const fail = checks.filter((c) => c.level === "fail").length, warn = checks.filter((c) => c.level === "warn").length;
+    const list = el("div", {class: "checks"});
+    let area = null;
+    for (const entry of [...checks].sort((a, b) => LEVEL_RANK[a.level] - LEVEL_RANK[b.level])) {
+      if (entry.level === "ok" && !showOk) continue;
+      if (entry.area !== area) { area = entry.area; list.append(el("div", {class: "check-area"}, area)); }
+      list.append(el("div", {class: `check check-${entry.level}`}, el("span", {class: "check-mark"}, LEVEL_MARK[entry.level]),
+        el("div", {}, el("div", {}, entry.message), entry.fix && entry.level !== "ok" ? commandLine(entry.fix) : null)));
+    }
+    const ok = checks.length - fail - warn;
+    out.push(el("div", {class: `card block${fail ? " error-box" : ""}`},
+      el("h4", {}, fail ? `Health · ${fail} to fix, ${warn} to look at` : warn ? `Health · ${warn} to look at` : "Health · everything is in place"),
+      list.childElementCount ? list : null,
+      el("button", {class: "btn small ghost", style: {marginTop: "6px"}, onclick: () => { showOk = !showOk; shownSetup = null; renderDrawer(); }},
+         showOk ? "Hide what is fine" : `Show what is fine (${ok})`),
+      el("div", {class: "tiny muted", style: {marginTop: "4px"}}, "From `useml check` at the last full refresh. Each fix is a command to run on the machine.")));
+  } else {
+    for (const warning of setup.warnings || []) out.push(el("div", {class: "card block warn small"}, `⚠ ${warning}`));
+    if ((setup.suggestions || []).length) out.push(block("Suggested commands", ...setup.suggestions.map(commandLine)));
+  }
+  const facts = el("div", {class: "kv"});
+  const fact = (key, value) => facts.append(el("div", {}, key), el("div", {}, value));
   const policy = setup.policy || {};
-  fact("downloads", policy.parallel_allowed ? "parallel allowed" : `sequential (socket guard ${policy.socket_guard ? "on" : "off"}, xet ${policy.xet_disabled ? "off" : "on"})`);
-  if (setup.downloads) fact("recorded downloads", `${setup.downloads.count} · ${bytes(setup.downloads.bytes)}`);
-  if (setup.store && !setup.store.error) fact("cache store", `${bytes(setup.store.bytes)}${setup.store.budget ? ` of ${bytes(setup.store.budget)} budget` : " (no budget)"} · ${setup.store.spaces} spaces · ${bytes(setup.store.free)} free`);
-  if (setup.processed && !setup.processed.error) fact("processed data", `${setup.processed.tables} tables · ${bytes(setup.processed.bytes)} · ${setup.processed.names} names${setup.processed.unused_tables ? ` · ${setup.processed.unused_tables} unused` : ""}`);
-  if (Array.isArray(setup.datasets)) fact("datasets", setup.datasets.length ? setup.datasets.map((d) => `${d.name} (${d.state}${d.records ? `, ${d.records}` : ""})`).join(", ") : "none registered");
-  fact("experiences", Object.entries(setup.experiences || {}).map(([k, v]) => `${v} ${k}`).join(", ") || "none");
+  fact("Downloads", policy.parallel_allowed ? "parallel allowed" : `sequential (socket guard ${policy.socket_guard ? "on" : "off"}, xet ${policy.xet_disabled ? "off" : "on"})`);
+  if (setup.downloads) fact("Recorded downloads", `${setup.downloads.count} · ${bytes(setup.downloads.bytes)}`);
+  if (setup.store && !setup.store.error) fact("Cache store", `${bytes(setup.store.bytes)}${setup.store.budget ? ` of ${bytes(setup.store.budget)}` : " (no budget)"} · ${setup.store.spaces} spaces · ${bytes(setup.store.free)} free`);
+  if (setup.processed && !setup.processed.error) fact("Processed data", `${setup.processed.tables} tables · ${bytes(setup.processed.bytes)} · ${setup.processed.names} names${setup.processed.unused_tables ? ` · ${setup.processed.unused_tables} unused` : ""}`);
+  if (Array.isArray(setup.datasets)) fact("Datasets", setup.datasets.length ? setup.datasets.map((d) => `${d.name} (${d.state}${d.records ? `, ${d.records}` : ""})`).join(", ") : "none registered");
+  fact("Experiences", Object.entries(setup.experiences || {}).map(([k, v]) => `${v} ${k}`).join(", ") || "none");
   fact("tmux", setup.tmux ? "available" : "not installed");
-  fact("caches left in the home", (setup.home_caches || []).map((c) => c.path).join(", ") || "none");
-  fact("config file", setup.config_file);
-  panel.append(el("h3", {}, "State"), facts);
+  fact("Caches in the home", (setup.home_caches || []).map((c) => c.path).join(", ") || "none");
+  fact("Config file", setup.config_file);
+  out.push(block("State", facts));
 
   // Settings: the page only COMPOSES a command; it sends nothing to the machine.
   const settings = setup.settings || [];
-  const table = el("table", {class: "settings"}, el("thead", {}, el("tr", {}, el("th", {}, "Setting"), el("th", {}, "Value"), el("th", {class: "hide-sm"}, "Meaning"))));
-  const body = el("tbody");
-  for (const entry of settings) {
-    body.append(el("tr", {class: "row", onclick: () => { keyInput.value = entry.key.replace("<VARIABLE>", ""); valueInput.value = entry.value === null || entry.value === undefined ? "" : (typeof entry.value === "string" ? entry.value : JSON.stringify(entry.value)); compose(); }},
-      el("td", {}, entry.key), el("td", {}, show(entry.value)), el("td", {class: "hide-sm muted small"}, `${entry.kind} · ${entry.meaning}`)));
-  }
-  table.append(body);
-  const keyInput = el("input", {list: "setting-keys", placeholder: "monitor.log_lines"});
-  const valueInput = el("input", {placeholder: 'value: 50, true, "text", ["a", "b"]'});
-  const keys = el("datalist", {id: "setting-keys"}, ...settings.map((s) => el("option", {value: s.key})));
+  const keyInput = el("input", {list: "setting-keys", placeholder: "monitor.label", autocomplete: "off"});
+  const valueInput = el("input", {placeholder: 'GPU lab · 50 · true · ["a", "b"]', autocomplete: "off"});
   const output = el("div");
-  function compose() {
+  const compose = () => {
     output.replaceChildren();
     const key = keyInput.value.trim();
     if (!key) return;
     const value = valueInput.value.trim();
-    output.append(value ? commandLine(`useml settings set ${key} ${quote(value)}`)
-                        : commandLine(`useml settings unset ${key}`));
-    output.append(el("div", {class: "muted small"}, "Run it on the machine. The dashboard never changes anything by itself; the previous file is kept as config.toml.bak."));
-  }
+    output.append(commandLine(value ? `useml settings set ${key} ${quote(value)}` : `useml settings unset ${key}`),
+      el("div", {class: "tiny muted"}, "Run it on the machine. The dashboard never changes anything by itself; the previous file is kept as config.toml.bak."));
+  };
   keyInput.addEventListener("input", compose); valueInput.addEventListener("input", compose);
-  panel.append(el("h3", {}, "Settings"), el("div", {class: "muted small"}, "Click a row or type a key; empty value = remove it."),
-               el("div", {class: "editor"}, el("label", {}, "key", keyInput), el("label", {}, "new value", valueInput), keys),
-               output, table);
+  const rows = settings.map((entry) => el("tr", {style: {cursor: "pointer"}, onclick: () => {
+      keyInput.value = entry.key.replace("<VARIABLE>", "");
+      valueInput.value = entry.value === null || entry.value === undefined ? "" : (typeof entry.value === "string" ? entry.value : JSON.stringify(entry.value));
+      compose(); valueInput.focus();
+    }}, el("td", {}, entry.key), el("td", {}, show(entry.value)), el("td", {class: "hide-sm muted"}, entry.meaning)));
+  out.push(block("Change a setting",
+    el("div", {class: "small muted", style: {marginBottom: "6px"}}, "On the machine, the guided editor walks every setting, then checks the machine:"),
+    commandLine("useml settings edit"),
+    el("div", {class: "small muted", style: {margin: "10px 0"}}, "Or change one: pick a row or type a key; an empty value removes it. You get the command to run on the machine."),
+    el("div", {class: "editor"}, el("label", {}, "Setting", keyInput), el("label", {}, "New value", valueInput),
+       el("datalist", {id: "setting-keys"}, settings.map((s) => el("option", {value: s.key})))),
+    output,
+    el("table", {class: "settings", style: {marginTop: "12px"}},
+       el("thead", {}, el("tr", {}, el("th", {}, "Setting"), el("th", {}, "Value"), el("th", {class: "hide-sm"}, "Meaning"))),
+       el("tbody", {}, rows))));
+  body.replaceChildren(...out);
 }
 
-$("refresh").addEventListener("click", refresh);
-$("auto").addEventListener("change", (event) => {
-  clearInterval(timer);
-  if (event.target.checked) timer = setInterval(refresh, 15000);
+// ── toast ───────────────────────────────────────────────────────────────────
+let toastTimer = null;
+function toast(message, command) {
+  const node = $("toast");
+  node.replaceChildren(el("div", {class: "row"}, el("div", {}, message),
+    el("button", {class: "icon-btn", "aria-label": "Close", onclick: () => { node.hidden = true; }}, svgIcon("M6 6l12 12M18 6L6 18"))),
+    command ? commandLine(command) : null);
+  node.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { node.hidden = true; }, 15000);
+}
+
+// ── projects: components, versions, ablation map, correlations ──────────────
+//
+// Vocabulary shown on the page:
+//   run      one execution of an experience (one declaration). Ended runs are kept.
+//   factor   a choice that can differ between runs: a step argument, a config and its
+//            overrides, a dataset, a tag.
+//   result   a number a run produced (JSON outputs, last / best value of each curve).
+//   version  the code of the steps; two runs of one version differ only by their factors.
+let view = {kind: "live"};
+let projectsList = null, projectPage = null, projectsLoaded = 0, projectsError = null;
+let flipped = prefs.get("flipped", {});            // result key -> true: lower is better ⇄ higher
+let primaries = prefs.get("primary", {});          // project -> result key
+let mapState = {sort: null, desc: true, reference: null, all: false, cell: null, curve: null};
+const LOWER_BETTER = /(loss|error|err\b|perplexity|ppl|mse|mae|rmse|wer|cer|fid|time|seconds|latency|memory|regret|distance)/i;
+const PALETTE = ["#4f46e5", "#0891b2", "#d97706", "#16a34a", "#db2777", "#7c3aed", "#dc2626", "#65a30d"];
+
+function setView(next) {
+  const changed = JSON.stringify(next) !== JSON.stringify(view);
+  view = next;
+  $("liveView").hidden = view.kind !== "live";
+  $("projectsView").hidden = view.kind === "live";
+  for (const link of document.querySelectorAll("#views a")) {
+    link.classList.toggle("on", (link.dataset.view === "live") === (view.kind === "live"));
+  }
+  if (changed) {
+    mapState = {...mapState, sort: null, reference: null, cell: null, curve: null, all: false};
+    window.scrollTo(0, 0);
+    if (view.kind !== "live") loadProjectsView();
+  }
+}
+function viewHash() {
+  if (view.kind === "projects") return "#/projects";
+  if (view.kind === "project") return `#/projects/${encodeURIComponent(view.name)}`;
+  if (view.kind === "method") return `#/projects/${encodeURIComponent(view.name)}/${encodeURIComponent(view.method)}`;
+  return "#/";
+}
+async function loadProject(name) {
+  projectPage = await call(`api/project?name=${encodeURIComponent(name)}`);
+  projectsLoaded = Date.now();
+  return projectPage;
+}
+async function loadProjectsView() {
+  try {
+    if (view.kind === "projects") { projectsList = await call("api/projects"); projectsLoaded = Date.now(); }
+    else if (view.kind === "project" || view.kind === "method") await loadProject(view.name);
+    projectsError = null;
+  } catch (error) { projectsError = error.message; }
+  renderProjectsView();
+}
+
+// ── the runs of a page: kept records + experiences running now ──────────────
+function pageRuns() {
+  if (!projectPage) return [];
+  const kept = projectPage.runs.map((r) => ({...r, key: r.id}));
+  const live = (projectPage.live || []).filter((e) => !["done", "failed", "died", "stopped"].includes(e.status))
+    .map((e) => ({key: `live:${e.machine}:${e.name}`, live: true, experience: e.name, method: e.method,
+                  status: e.status === "running" && e.polled_age > SILENT_AFTER ? "silent" : e.status,
+                  factors: e.factors || {}, results: {}, version: e.version, machine: e.machine_label || e.machine,
+                  ended: e.updated, progress: e.progress, done: e.done, total: e.total}));
+  return [...live, ...kept];
+}
+function methodsOf(project, runs) {
+  const names = new Set(Object.keys(project.methods || {}));
+  for (const run of runs) names.add(run.method || "(unassigned)");
+  return [...names].sort((a, b) => (b === project.focus) - (a === project.focus) || a.localeCompare(b));
+}
+function resultKeys(runs) {
+  const keys = new Set();
+  for (const run of runs) for (const key of Object.keys(run.results || {})) keys.add(key);
+  return [...keys].sort((a, b) => (a.endsWith(".last") - b.endsWith(".last")) || a.localeCompare(b));
+}
+function lowerIsBetter(key) { return LOWER_BETTER.test(key.split(".").slice(-2).join(".")) !== !!flipped[key]; }
+function primaryOf(project, runs) {
+  const keys = resultKeys(runs);
+  const chosen = primaries[project.name];
+  if (chosen && keys.includes(chosen)) return chosen;
+  return keys.find((k) => !k.endsWith(".last")) || keys[0] || null;
+}
+function best(runs, key) {
+  const values = runs.map((r) => r.results?.[key]).filter((v) => typeof v === "number");
+  if (!values.length) return null;
+  return lowerIsBetter(key) ? Math.min(...values) : Math.max(...values);
+}
+function varying(runs) {
+  const keys = new Set();
+  for (const run of runs) for (const key of Object.keys(run.factors || {})) keys.add(key);
+  const vary = [], fixed = [];
+  for (const key of [...keys].sort()) {
+    const values = new Set(runs.map((r) => JSON.stringify(r.factors?.[key] ?? null)));
+    (values.size > 1 ? vary : fixed).push(key);
+  }
+  return {vary, fixed};
+}
+function show(value) {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "number") return number(value);
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+// ── statistics: how a factor goes with a result ─────────────────────────────
+function association(runs, factor, result) {
+  const pairs = runs.filter((r) => typeof r.results?.[result] === "number" && r.factors && factor in r.factors && r.factors[factor] !== null)
+    .map((r) => [r.factors[factor], r.results[result], r]);
+  if (pairs.length < 3) return null;
+  const ys = pairs.map((p) => p[1]);
+  const numeric = pairs.every((p) => typeof p[0] === "number" || typeof p[0] === "boolean");
+  if (numeric) {
+    const xs = pairs.map((p) => Number(p[0]));
+    if (new Set(xs).size < 2) return null;
+    const mx = xs.reduce((a, b) => a + b) / xs.length, my = ys.reduce((a, b) => a + b) / ys.length;
+    let sxy = 0, sxx = 0, syy = 0;
+    xs.forEach((x, i) => { sxy += (x - mx) * (ys[i] - my); sxx += (x - mx) ** 2; syy += (ys[i] - my) ** 2; });
+    if (!sxx || !syy) return null;
+    return {kind: "r", value: sxy / Math.sqrt(sxx * syy), n: pairs.length, pairs};
+  }
+  // A choice among names: the correlation ratio η, 0 (no link) to 1 (the choice decides).
+  const groups = {};
+  for (const [x, y] of pairs) (groups[JSON.stringify(x)] ||= []).push(y);
+  if (Object.keys(groups).length < 2) return null;
+  const mean = ys.reduce((a, b) => a + b) / ys.length;
+  const total = ys.reduce((a, y) => a + (y - mean) ** 2, 0);
+  if (!total) return null;
+  const between = Object.values(groups).reduce((a, g) => a + g.length * ((g.reduce((s, y) => s + y, 0) / g.length) - mean) ** 2, 0);
+  return {kind: "eta", value: Math.sqrt(between / total), n: pairs.length, pairs, groups};
+}
+
+// ── rendering ───────────────────────────────────────────────────────────────
+function renderProjectsView() {
+  const root = $("projectsView");
+  if (view.kind === "live") return;
+  if (projectsError) { root.replaceChildren(el("div", {class: "card onboard"}, el("h3", {}, "Cannot load"), el("div", {class: "muted"}, projectsError))); return; }
+  if (view.kind === "projects") return renderProjectList(root);
+  if (!projectPage || projectPage.project.name !== view.name) { root.replaceChildren(el("div", {class: "loading"}, "Loading…")); return; }
+  if (view.kind === "project") renderProject(root);
+  else renderMethod(root);
+}
+function historyNote(history) {
+  if (!history) return null;
+  if (history.error) return el("span", {class: "chip-note bad", title: history.error}, "history: error");
+  if (history.kept) return el("span", {class: "chip-note ok", title: history.repo || "a folder of this machine"}, `history kept · ${history.runs} runs`);
+  return el("span", {class: "chip-note warn", title: "Runs are kept until the Space restarts. See useml docs projects."}, "history not kept");
+}
+function renderProjectList(root) {
+  const list = projectsList?.projects || [];
+  const head = el("div", {class: "page-head"}, el("h1", {}, "Projects"), historyNote(projectsList?.history));
+  if (!list.length) {
+    root.replaceChildren(head, el("div", {class: "card onboard"},
+      el("h3", {}, "Declare a project"),
+      el("div", {class: "muted small"}, "In the repository's useml.toml (or [tool.useml.project] in pyproject.toml):"),
+      el("pre", {}, '[project]\nname = "robust-vision"\ndescription = "Classifiers that survive corrupted inputs."\nfocus = "wide"\n\n[project.methods.wide]\ndescription = "Wider blocks, same budget."'),
+      el("div", {class: "muted small"}, "Then: exp.experience(name, method=\"wide\"). Every machine running this repository reports to the same project."),
+      commandLine("useml docs projects")));
+    return;
+  }
+  root.replaceChildren(head, el("div", {class: "focus-grid"}, list.map((p) => el("article", {class: "card focus project-card", tabindex: "0",
+      onclick: () => go(`#/projects/${encodeURIComponent(p.name)}`)},
+    el("div", {class: "head"}, el("div", {class: "name ellipsis"}, p.name), p.running ? pill("running") : null),
+    p.description ? el("div", {class: "small muted"}, p.description) : null,
+    el("div", {class: "where"}, p.focus ? el("span", {}, "working on ", el("b", {}, p.focus)) : null,
+       el("span", {}, `${p.methods} methods`), el("span", {}, `${p.runs} runs`),
+       p.last ? el("span", {}, `last ${ago(Date.now() / 1000 - p.last)}`) : null)))));
+}
+function crumbs(...parts) {
+  return el("div", {class: "crumbs"}, parts.map((part, i) => [i ? el("span", {class: "faint"}, " / ") : null,
+    part.href ? el("a", {href: part.href}, part.label) : el("span", {}, part.label)]));
+}
+function primarySelect(project, runs) {
+  const keys = resultKeys(runs.filter((r) => !r.live));
+  if (!keys.length) return null;
+  const current = primaryOf(project, runs);
+  const select = el("select", {class: "select", "aria-label": "Main result", onchange: (e) => {
+    primaries[project.name] = e.target.value; prefs.set("primary", primaries); renderProjectsView(); }},
+    keys.map((k) => el("option", {value: k, selected: k === current ? "selected" : null}, k)));
+  return el("label", {class: "inline-label"}, "main result", select);
+}
+function exportMenu(project, runs) {
+  const kept = runs.filter((r) => !r.live);
+  const save = (name, text, type) => {
+    const link = el("a", {href: URL.createObjectURL(new Blob([text], {type})), download: name});
+    document.body.append(link); link.click(); link.remove();
+  };
+  return el("div", {class: "actions"},
+    el("button", {class: "btn small", onclick: () => save(`${project.name}.md`, markdown(project, kept), "text/markdown")}, "Export · Markdown"),
+    el("button", {class: "btn small", onclick: () => save(`${project.name}.json`, JSON.stringify({project, runs: kept}, null, 1), "application/json")}, "Export · JSON"));
+}
+function renderProject(root) {
+  const project = projectPage.project, runs = pageRuns();
+  const primary = primaryOf(project, runs);
+  const out = [crumbs({label: "Projects", href: "#/projects"}, {label: project.name}),
+    el("div", {class: "page-head"}, el("h1", {}, project.name), historyNote(projectPage.history)),
+    project.description ? el("p", {class: "lead"}, project.description) : null,
+    el("div", {class: "toolbar"},
+      project.focus ? el("span", {class: "focus-tag"}, "Working on ", el("a", {href: `#/projects/${encodeURIComponent(project.name)}/${encodeURIComponent(project.focus)}`}, project.focus)) : null,
+      primarySelect(project, runs), el("div", {class: "spacer"}),
+      el("button", {class: "btn small", onclick: () => go(`#/new/${encodeURIComponent(project.name)}/method`)}, "+ Add a component"),
+      exportMenu(project, runs))];
+  // methods
+  out.push(el("section", {}, el("h2", {}, "Methods ", el("span", {class: "count"}, "what you try")),
+    el("div", {class: "method-grid"}, methodsOf(project, runs).map((name) => {
+      const declared = (project.methods || {})[name] || {};
+      const mine = runs.filter((r) => (r.method || "(unassigned)") === name);
+      const kept = mine.filter((r) => !r.live);
+      const versions = new Set(kept.map((r) => r.version)).size;
+      const top = primary ? best(kept, primary) : null;
+      const running = mine.filter((r) => r.status === "running").length;
+      const last = Math.max(0, ...kept.map((r) => r.ended || 0));
+      return el("article", {class: `card method${name === project.focus ? " is-focus" : ""}`, tabindex: "0",
+          onclick: () => go(`#/projects/${encodeURIComponent(project.name)}/${encodeURIComponent(name)}`)},
+        el("div", {class: "head"}, el("div", {class: "name ellipsis"}, name),
+           name === project.focus ? el("span", {class: "focus-tag small"}, "focus") : null,
+           declared.status ? el("span", {class: "chip-note"}, declared.status) : null),
+        declared.description ? el("div", {class: "small muted"}, declared.description) : null,
+        el("div", {class: "method-stats"},
+          el("div", {}, el("b", {}, kept.length), el("span", {}, "runs")),
+          el("div", {}, el("b", {}, versions), el("span", {}, "versions")),
+          el("div", {}, el("b", {}, top === null ? "—" : number(top)), el("span", {class: "ellipsis", title: primary || ""}, primary ? `best ${primary}` : "best")),
+          running ? el("div", {}, el("b", {style: {color: "var(--run)"}}, running), el("span", {}, "running")) : null),
+        last ? el("div", {class: "tiny faint"}, `last run ${ago(Date.now() / 1000 - last)}`) : el("div", {class: "tiny faint"}, "no run kept yet"));
+    }))));
+  // datasets
+  const datasets = {};
+  for (const name of project.datasets || []) datasets[name] = {runs: 0, methods: new Set(), declared: true};
+  for (const run of runs.filter((r) => !r.live)) for (const d of run.datasets || []) {
+    const base = d.split("[")[0];
+    (datasets[base] ||= {runs: 0, methods: new Set(), declared: false});
+    datasets[base].runs++; datasets[base].methods.add(run.method || "(unassigned)");
+  }
+  out.push(el("section", {}, el("h2", {}, "Datasets ", el("span", {class: "count"}, "what you learn and measure on")),
+    Object.keys(datasets).length ? el("div", {class: "dataset-list"}, Object.entries(datasets).sort().map(([name, info]) =>
+      el("div", {class: "card dataset"}, el("b", {}, name), el("span", {class: "small muted"},
+        info.runs ? `${info.runs} runs · ${[...info.methods].join(", ")}` : "declared, no run yet"))))
+      : el("div", {class: "card empty-now"}, "No dataset declared or read yet.")));
+  out.push(ablationSection(project, runs, {scope: "project"}));
+  root.replaceChildren(...out.filter(Boolean));
+}
+function renderMethod(root) {
+  const project = projectPage.project;
+  const all = pageRuns();
+  const runs = all.filter((r) => (r.method || "(unassigned)") === view.method);
+  const declared = (project.methods || {})[view.method] || {};
+  const base = `#/projects/${encodeURIComponent(project.name)}`;
+  const out = [crumbs({label: "Projects", href: "#/projects"}, {label: project.name, href: base}, {label: view.method}),
+    el("div", {class: "page-head"}, el("h1", {}, view.method),
+       view.method === project.focus ? el("span", {class: "focus-tag"}, "focus") : null,
+       declared.status ? el("span", {class: "chip-note"}, declared.status) : null),
+    declared.description ? el("p", {class: "lead"}, declared.description) : null,
+    el("div", {class: "toolbar"}, primarySelect(project, all), el("div", {class: "spacer"}),
+      view.method !== project.focus && view.method !== "(unassigned)" ? el("button", {class: "btn small", onclick: () =>
+        toast(`To work on “${view.method}”, set it as the focus in the repository's useml.toml:`, `focus = ${JSON.stringify(view.method)}`)}, "Set as focus") : null)];
+  if (!runs.length) out.push(el("div", {class: "card empty-now"}, "No run of this method yet. ",
+    el("a", {href: `#/new/${encodeURIComponent(project.name)}/method`}, "How to start one")));
+  else {
+    out.push(versionsSection(project, runs));
+    out.push(ablationSection(project, runs, {scope: "method"}));
+    out.push(curvesSection(runs));
+  }
+  root.replaceChildren(...out.filter(Boolean));
+}
+
+function versionsSection(project, runs) {
+  const kept = runs.filter((r) => !r.live);
+  if (!kept.length) return null;
+  const primary = primaryOf(project, runs);
+  const groups = {};
+  for (const run of kept) (groups[run.version || "?"] ||= []).push(run);
+  const ordered = Object.entries(groups).sort((a, b) => Math.min(...a[1].map((r) => r.ended || 0)) - Math.min(...b[1].map((r) => r.ended || 0)));
+  let previous = null;
+  const items = ordered.map(([version, group], index) => {
+    const steps = group[0].steps || [];
+    let changed = [];
+    if (previous) {
+      const before = Object.fromEntries((previous.steps || []).map((s) => [s.name, s.code]));
+      changed = steps.filter((s) => s.code && before[s.name] !== s.code).map((s) => s.name);
+      const added = steps.filter((s) => !(s.name in before)).map((s) => `+${s.name}`);
+      changed = [...new Set([...changed.filter((n) => n in before), ...added])];
+    }
+    previous = group[0];
+    const commits = [...new Set(group.map((r) => r.git ? `${r.git.commit.slice(0, 7)}${r.git.dirty ? "*" : ""}` : null).filter(Boolean))];
+    const top = primary ? best(group, primary) : null;
+    const from = Math.min(...group.map((r) => r.ended || Infinity)), to = Math.max(...group.map((r) => r.ended || 0));
+    return el("div", {class: "version"},
+      el("div", {class: "version-dot"}, String(index + 1)),
+      el("div", {},
+        el("div", {}, el("b", {class: "mono"}, `v${version}`), el("span", {class: "muted small"}, ` · ${group.length} run${group.length > 1 ? "s" : ""}`),
+           top !== null ? el("span", {class: "small"}, ` · best ${primary} `, el("b", {}, number(top))) : null),
+        el("div", {class: "tiny muted"}, `${new Date(from * 1000).toLocaleDateString()}${to - from > 86400 ? ` → ${new Date(to * 1000).toLocaleDateString()}` : ""}`,
+           commits.length ? ` · commit ${commits.join(", ")}` : "", changed.length ? ` · code changed: ${changed.join(", ")}` : index ? " · code changed" : " · first version")));
+  });
+  return el("section", {}, el("h2", {}, "Versions ", el("span", {class: "count"}, "the code of the steps, oldest first; * = uncommitted changes")),
+    el("div", {class: "card block versions"}, items.reverse()));
+}
+
+function ablationSection(project, runs, {scope}) {
+  const withMethod = scope === "project" ? runs.map((r) => ({...r, factors: {method: r.method || "(unassigned)", ...r.factors}})) : runs;
+  const {vary, fixed} = varying(withMethod);
+  const primary = primaryOf(project, runs);
+  let results = resultKeys(withMethod);
+  if (primary) results = [primary, ...results.filter((k) => k !== primary)];
+  const shownResults = mapState.all ? results : results.slice(0, 3);
+  const sorted = [...withMethod].sort((a, b) => {
+    const key = mapState.sort || (primary ? `r:${primary}` : null);
+    if (a.live !== b.live) return a.live ? -1 : 1;
+    if (!key) return (b.ended || 0) - (a.ended || 0);
+    const [kind, name] = [key.slice(0, 1), key.slice(2)];
+    const va = kind === "r" ? a.results?.[name] : a.factors?.[name], vb = kind === "r" ? b.results?.[name] : b.factors?.[name];
+    if (va === undefined || va === null) return 1;
+    if (vb === undefined || vb === null) return -1;
+    let order = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
+    if (kind === "r" && !mapState.sort) order = lowerIsBetter(name) ? order : -order;
+    else if (mapState.desc) order = -order;
+    return order;
+  });
+  const reference = withMethod.find((r) => r.key === mapState.reference);
+  const ranges = {};
+  for (const key of shownResults) {
+    const values = withMethod.map((r) => r.results?.[key]).filter((v) => typeof v === "number");
+    ranges[key] = [Math.min(...values), Math.max(...values)];
+  }
+  const sortBy = (key) => { mapState.desc = mapState.sort === key ? !mapState.desc : true; mapState.sort = key; renderProjectsView(); };
+  const head = el("tr", {}, el("th", {title: "Reference: the other rows show what differs from it"}, "ref"), el("th", {}, "Run"), el("th", {}, "Status"),
+    shownResults.map((k, i) => el("th", {class: `result-col sortable${i === shownResults.length - 1 ? " group-end" : ""}`, title: `result ${k} — ${lowerIsBetter(k) ? "lower" : "higher"} is better`},
+      el("span", {onclick: () => sortBy(`r:${k}`)}, k),
+      el("button", {class: "dir", title: "Switch: lower / higher is better", onclick: (e) => { e.stopPropagation(); flipped[k] = !flipped[k]; prefs.set("flipped", flipped); renderProjectsView(); }},
+         lowerIsBetter(k) ? "↓" : "↑"))),
+    vary.map((k) => el("th", {class: "factor-col sortable", onclick: () => sortBy(`f:${k}`), title: `factor ${k}`}, k)),
+    el("th", {class: "hide-sm"}, "Version"));
+  const body = sorted.map((run) => {
+    const cells = [el("td", {}, run.live ? null : el("input", {type: "radio", name: "reference", checked: run.key === mapState.reference ? "checked" : null,
+        "aria-label": "Use as reference", onclick: (e) => { e.stopPropagation(); mapState.reference = mapState.reference === run.key ? null : run.key; renderProjectsView(); }})),
+      el("td", {}, el("div", {}, run.experience), el("div", {class: "sub"}, run.live ? `${run.machine} · now` : `${run.machine || ""}${run.ended ? ` · ${ago(Date.now() / 1000 - run.ended)}` : ""}`)),
+      el("td", {}, pill(run.status))];
+    for (const key of shownResults) {
+      const value = run.results?.[key];
+      const td = el("td", {class: "num"}, typeof value === "number" ? number(value) : "");
+      if (typeof value === "number") {
+        const [min, max] = ranges[key];
+        let t = max === min ? .5 : (value - min) / (max - min);
+        if (lowerIsBetter(key)) t = 1 - t;
+        td.style.background = t >= .5 ? `color-mix(in srgb, var(--ok) ${Math.round((t - .5) * 56)}%, transparent)`
+                                       : `color-mix(in srgb, var(--bad) ${Math.round((.5 - t) * 40)}%, transparent)`;
+        if (value === best(withMethod, key)) td.classList.add("best");
+      }
+      if (key === shownResults[shownResults.length - 1]) td.classList.add("group-end");
+      cells.push(td);
+    }
+    for (const key of vary) {
+      const value = run.factors?.[key];
+      const differs = reference && reference !== run && JSON.stringify(value ?? null) !== JSON.stringify(reference.factors?.[key] ?? null);
+      cells.push(el("td", {class: `factor${differs ? " differs" : ""}`}, show(value)));
+    }
+    cells.push(el("td", {class: "hide-sm mono small"}, run.version ? `v${run.version}` : ""));
+    return el("tr", {class: run.key === mapState.reference ? "is-ref" : "", onclick: () => run.live ? go(`#/exp/${encodeURIComponent(run.key.split(":")[1])}/${encodeURIComponent(run.experience)}`)
+      : go(`#/run/${encodeURIComponent(project.name)}/${run.id}`)}, cells);
+  });
+  const fixedText = fixed.slice(0, 12).map((k) => `${k} = ${show(withMethod.find((r) => r.factors && k in r.factors)?.factors[k])}`).join(" · ");
+  const section = el("section", {},
+    el("h2", {}, scope === "project" ? "Ablation map · every run" : "Ablation map", el("span", {class: "count"}, "a row per run, a column per factor that changes, then the results")),
+    el("div", {class: "card table-wrap map"},
+      el("table", {class: "ablation"}, el("thead", {}, head), el("tbody", {}, body))),
+    el("div", {class: "map-notes small muted"},
+      fixed.length ? el("div", {}, el("b", {}, "Same in every run: "), fixedText, fixed.length > 12 ? ` … (+${fixed.length - 12})` : "") : null,
+      results.length > 3 ? el("button", {class: "btn small ghost", onclick: () => { mapState.all = !mapState.all; renderProjectsView(); }},
+        mapState.all ? "Fewer results" : `All ${results.length} results`) : null,
+      el("div", {}, "Pick a reference (ref) to see what each run changes. Green: better, red: worse, within each column. Click a row for the run.")));
+  const correlations = correlationSection(withMethod, vary, shownResults);
+  return el("div", {class: "stack"}, section, correlations);
+}
+
+function correlationSection(runs, factors, results) {
+  const kept = runs.filter((r) => !r.live);
+  if (kept.length < 3 || !factors.length || !results.length) {
+    return kept.length && factors.length ? el("div", {class: "small muted"}, "Correlations appear from 3 runs that differ by a factor.") : null;
+  }
+  const head = el("tr", {}, el("th", {}, "factor ↓ · result →"), results.map((k) => el("th", {class: "result-col", title: k}, k)));
+  factors = factors.filter((factor) => results.some((result) => association(kept, factor, result)));
+  if (!factors.length) return el("div", {class: "small muted"}, "No factor varies over 3 runs with results yet: no correlation to show.");
+  const rows = factors.map((factor) => el("tr", {}, el("td", {class: "factor-name"}, factor), results.map((result) => {
+    const link = association(kept, factor, result);
+    if (!link) return el("td", {class: "num faint"}, "·");
+    const better = link.kind === "r" ? (lowerIsBetter(result) ? -link.value : link.value) : null;
+    const td = el("td", {class: "num corr", title: link.kind === "r"
+        ? `r = ${link.value.toFixed(2)} over ${link.n} runs: when ${factor} grows, ${result} ${link.value > 0 ? "grows" : "shrinks"} (${better > 0 ? "better" : "worse"})`
+        : `η = ${link.value.toFixed(2)} over ${link.n} runs: how much the choice of ${factor} explains ${result} (0: not at all, 1: entirely)`,
+      onclick: () => { mapState.cell = {factor, result}; renderProjectsView(); }},
+      link.kind === "r" ? `${link.value > 0 ? "+" : "−"}${Math.abs(link.value).toFixed(2)}` : `η ${link.value.toFixed(2)}`);
+    const strength = Math.round(Math.abs(link.value) * 55);
+    td.style.background = link.kind === "r" ? `color-mix(in srgb, var(${better > 0 ? "--ok" : "--bad"}) ${strength}%, transparent)`
+                                            : `color-mix(in srgb, var(--accent) ${strength}%, transparent)`;
+    if (mapState.cell && mapState.cell.factor === factor && mapState.cell.result === result) td.classList.add("on");
+    return td;
+  })));
+  const out = el("section", {}, el("h2", {}, "Correlations ", el("span", {class: "count"}, "how each factor goes with each result")),
+    el("div", {class: "card table-wrap map"}, el("table", {}, el("thead", {}, head), el("tbody", {}, rows))),
+    el("div", {class: "small muted map-notes"}, "r: from −1 to +1, for numbers (green: more of the factor, better result). η: from 0 to 1, for choices among names. A few runs only give a hint, not a proof. Click a cell to see the runs."));
+  if (mapState.cell) {
+    const link = association(kept, mapState.cell.factor, mapState.cell.result);
+    if (link) out.append(el("div", {class: "card block"}, el("h4", {}, `${mapState.cell.result} against ${mapState.cell.factor} · ${link.n} runs`), scatter(link, mapState.cell)));
+  }
+  return out;
+}
+function scatter(link, cell) {
+  const w = 640, h = 220, left = 46, right = 12, top = 10, bottom = 30;
+  const numeric = link.kind === "r";
+  const levels = numeric ? null : Object.keys(link.groups);
+  const xs = link.pairs.map((p) => numeric ? Number(p[0]) : levels.indexOf(JSON.stringify(p[0])));
+  const ys = link.pairs.map((p) => p[1]);
+  const [minX, maxX] = numeric ? [Math.min(...xs), Math.max(...xs)] : [-.5, levels.length - .5];
+  const [minY, maxY] = [Math.min(...ys), Math.max(...ys)];
+  const px = (x) => left + (maxX === minX ? .5 : (x - minX) / (maxX - minX)) * (w - left - right);
+  const py = (y) => top + (1 - (maxY === minY ? .5 : (y - minY) / (maxY - minY))) * (h - top - bottom);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("class", "scatter");
+  let html = `<line x1="${left}" x2="${w - right}" y1="${h - bottom}" y2="${h - bottom}" stroke="var(--line)"/>`;
+  if (!numeric) {
+    levels.forEach((level, i) => {
+      const group = link.groups[level], mean = group.reduce((a, b) => a + b, 0) / group.length;
+      html += `<line x1="${px(i) - 26}" x2="${px(i) + 26}" y1="${py(mean)}" y2="${py(mean)}" stroke="var(--text)" stroke-width="2"/>`;
+    });
+  }
+  link.pairs.forEach((p, i) => {
+    const jitter = numeric ? 0 : ((i * 37) % 17 - 8);
+    html += `<circle cx="${px(xs[i]) + jitter}" cy="${py(ys[i])}" r="5" fill="var(--accent)" fill-opacity=".75"><title></title></circle>`;
+  });
+  svg.innerHTML = html;
+  [...svg.querySelectorAll("title")].forEach((t, i) => { t.textContent = `${link.pairs[i][2].experience}: ${show(link.pairs[i][0])} → ${number(ys[i])}`; });
+  const label = (text, x, y, anchor) => {
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("x", x); t.setAttribute("y", y); t.setAttribute("font-size", "11"); t.setAttribute("text-anchor", anchor);
+    t.setAttribute("fill", "var(--muted)"); t.textContent = text; svg.append(t);
+  };
+  label(number(maxY), left - 6, top + 8, "end"); label(number(minY), left - 6, h - bottom, "end");
+  if (numeric) { label(number(minX), left, h - 10, "start"); label(number(maxX), w - right, h - 10, "end"); }
+  else levels.forEach((level, i) => label(show(JSON.parse(level)).slice(0, 22), px(i), h - 10, "middle"));
+  return svg;
+}
+
+function curvesSection(runs) {
+  const kept = runs.filter((r) => !r.live && r.curves);
+  const keys = new Set();
+  for (const run of kept) for (const [step, points] of Object.entries(run.curves)) for (const p of points) for (const k of Object.keys(p)) if (k !== "step") keys.add(`${step}.${k}`);
+  if (!keys.size) return null;
+  const list = [...keys].sort();
+  const current = list.includes(mapState.curve) ? mapState.curve : list[0];
+  const [step, ...rest] = current.split("."); const metric = rest.join(".");
+  const series = kept.map((run) => ({run, points: (run.curves[step] || []).filter((p) => typeof p[metric] === "number").map((p) => [p.step, p[metric]])}))
+    .filter((s) => s.points.length > 1).slice(0, 8);
+  const select = el("select", {class: "select", onchange: (e) => { mapState.curve = e.target.value; renderProjectsView(); }},
+    list.map((k) => el("option", {value: k, selected: k === current ? "selected" : null}, k)));
+  const box = el("div", {class: "card block"}, el("div", {class: "toolbar"}, el("label", {class: "inline-label"}, "curve", select),
+    el("span", {class: "small muted"}, series.length < kept.length ? `the ${series.length} most recent runs that have it` : "")));
+  if (series.length) {
+    const all = series.flatMap((s) => s.points);
+    const minX = Math.min(...all.map((p) => p[0])), maxX = Math.max(...all.map((p) => p[0]));
+    const minY = Math.min(...all.map((p) => p[1])), maxY = Math.max(...all.map((p) => p[1]));
+    const w = 640, h = 220, pad = 10, bottom = 22;
+    const px = (x) => pad + (maxX === minX ? .5 : (x - minX) / (maxX - minX)) * (w - 2 * pad);
+    const py = (y) => pad + (1 - (maxY === minY ? .5 : (y - minY) / (maxY - minY))) * (h - pad - bottom);
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("class", "scatter");
+    svg.innerHTML = series.map((s, i) => `<path d="${s.points.map(([x, y], j) => `${j ? "L" : "M"}${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(" ")}" fill="none" stroke="${PALETTE[i % PALETTE.length]}" stroke-width="2" vector-effect="non-scaling-stroke"/>`).join("");
+    box.append(svg, el("div", {class: "legend"}, series.map((s, i) => el("span", {}, el("i", {style: {background: PALETTE[i % PALETTE.length]}}),
+      `${s.run.experience} · ${number(s.points[s.points.length - 1][1])}`))),
+      el("div", {class: "tiny muted"}, `${metric}: ${number(minY)} to ${number(maxY)} · step ${number(minX)} to ${number(maxX)}`));
+  }
+  return el("section", {}, el("h2", {}, "Curves ", el("span", {class: "count"}, "the runs side by side")), box);
+}
+
+// ── one run, and composing new components ───────────────────────────────────
+function renderRun() {
+  const body = $("drawerBody");
+  const run = projectPage?.runs.find((r) => r.id === route.id);
+  if (!run) { $("drawerTitle").textContent = "Run"; $("tabs").replaceChildren(); body.replaceChildren(el("div", {class: "loading"}, projectPage ? "This run is not kept." : "Loading…")); return; }
+  $("drawerTitle").textContent = run.experience;
+  $("drawerPill").replaceChildren(pill(run.status));
+  $("drawerSub").textContent = [run.method || "(unassigned)", run.machine, run.ended ? new Date(run.ended * 1000).toLocaleString() : null,
+                                run.seconds ? duration(run.seconds) : null, `v${run.version}`].filter(Boolean).join(" · ");
+  const tabs = [["overview", "Overview"]];
+  if (Object.keys(run.curves || {}).length) tabs.push(["metrics", "Curves"]);
+  if ((run.configs || []).length) tabs.push(["configs", "Configs"]);
+  tabs.push(["alternative", "New alternative"]);
+  if (!tabs.some(([k]) => k === activeTab)) activeTab = "overview";
+  $("tabs").replaceChildren(...tabs.map(([key, label]) => el("button", {class: `tab${activeTab === key ? " on" : ""}`, onclick: () => { activeTab = key; renderDrawer(); }}, label)));
+  const out = [];
+  if (activeTab === "overview") {
+    if (run.error && (run.error.meaning || run.error.message)) out.push(el("div", {class: "card block error-box"}, el("h4", {}, "Why it stopped"),
+      run.error.meaning ? el("div", {class: "meaning"}, run.error.meaning) : null, run.error.message ? el("pre", {}, run.error.message) : null));
+    const facts = (entries) => { const kv = el("div", {class: "kv small"}); for (const [k, v] of entries) kv.append(el("div", {}, k), el("div", {class: "mono"}, show(v))); return kv; };
+    if (Object.keys(run.results || {}).length) out.push(block("Results", facts(Object.entries(run.results))));
+    if (Object.keys(run.factors || {}).length) out.push(block("Factors", facts(Object.entries(run.factors))));
+    out.push(block("Steps", el("div", {class: "steps"}, (run.steps || []).map((s, i) => el("div", {class: `step${s.done ? " done" : ""}`},
+      el("span", {class: "mark"}, s.done ? "✓" : String(i + 1)), el("span", {}, s.name), el("span", {class: "small muted"}, s.done ? duration(s.seconds) : ""),
+      el("span", {class: "fn"}, s.function))))));
+    const more = [["datasets", (run.datasets || []).join(", ")], ["commit", run.git ? `${run.git.commit}${run.git.dirty ? " (uncommitted changes)" : ""}` : null],
+                  ["tags", Object.keys(run.tags || {}).length ? JSON.stringify(run.tags) : null], ["note", run.note], ["useml", run.useml]].filter(([, v]) => v);
+    if (more.length) out.push(block("Context", facts(more)));
+  } else if (activeTab === "metrics") {
+    for (const [step, points] of Object.entries(run.curves || {})) {
+      const keys = [...new Set(points.flatMap((p) => Object.keys(p)).filter((k) => k !== "step"))];
+      out.push(block(`Step · ${step}`, el("div", {style: {display: "grid", gap: "18px"}}, keys.map((k) => chart(points, k)).filter(Boolean))));
+    }
+  } else if (activeTab === "configs") {
+    for (const config of run.configs) out.push(block(`${config.name} · cfg:${config.hash}`, el("pre", {}, config.yaml || JSON.stringify(config.overrides || {}, null, 2))));
+  } else if (activeTab === "alternative") {
+    const name = `${run.experience}-b`;
+    const code = (run.declaration || "").replace(`exp.experience(${JSON.stringify(run.experience).replace(/"/g, "'")}`, `exp.experience('${name}'`);
+    const area = el("textarea", {class: "code", spellcheck: "false", rows: String(Math.min(24, code.split("\n").length + 2))});
+    area.value = code;
+    out.push(block("Declare an alternative",
+      el("div", {class: "small muted", style: {marginBottom: "8px"}}, "This run's declaration, under a new name. Change a value (an argument, an override, a tag), copy it into your script and run it on a machine: it appears here as a new row of the ablation map."),
+      area,
+      el("div", {class: "actions", style: {marginTop: "8px"}}, el("button", {class: "btn small", onclick: async (e) => {
+        try { await navigator.clipboard.writeText(area.value); e.target.textContent = "copied"; } catch (error) { area.select(); e.target.textContent = "select it"; }
+        setTimeout(() => { e.target.textContent = "copy"; }, 1500); }}, "copy"))));
+  }
+  const scroll = body.scrollTop;
+  if (activeTab === "alternative" && body.querySelector("textarea")) return;     // keep what is typed
+  body.replaceChildren(...out); body.scrollTop = scroll;
+}
+
+function renderComposer() {
+  const body = $("drawerBody");
+  const project = projectPage?.project || {name: route.project, methods: {}};
+  $("drawerTitle").textContent = "Add a component";
+  $("drawerPill").replaceChildren();
+  $("drawerSub").textContent = `${project.name} · the page writes what to add; nothing is sent`;
+  const kinds = [["method", "Method"], ["dataset", "Dataset"], ["focus", "Focus"]];
+  $("tabs").replaceChildren(...kinds.map(([key, label]) => el("button", {class: `tab${route.what === key ? " on" : ""}`,
+    onclick: () => go(`#/new/${encodeURIComponent(project.name)}/${key}`)}, label)));
+  if (body.dataset.composer === route.what && body.querySelector("input")) return;
+  body.dataset.composer = route.what;
+  const field = (label, placeholder, value = "") => { const input = el("input", {placeholder, autocomplete: "off"}); input.value = value; return [el("label", {}, label, input), input]; };
+  const output = el("div");
+  const out = [];
+  const toml = (text) => el("div", {}, el("div", {class: "small muted", style: {margin: "10px 0 4px"}}, "Add to useml.toml (in pyproject.toml, prefix the table with tool.useml.):"), codeBlock(text));
+  if (route.what === "method") {
+    const [l1, name] = field("Name", "wide"), [l2, description] = field("What it tries", "Wider blocks, same budget"),
+          [l3, status] = field("Status", "idea, active, reference…", "idea"), [l4, globs] = field("Its experiences (glob, optional)", "vision/wide*");
+    const compose = () => {
+      const n = name.value.trim() || "my-method";
+      const lines = [`[project.methods.${/^[A-Za-z0-9_-]+$/.test(n) ? n : JSON.stringify(n)}]`, `description = ${JSON.stringify(description.value.trim())}`];
+      if (status.value.trim()) lines.push(`status = ${JSON.stringify(status.value.trim())}`);
+      if (globs.value.trim()) lines.push(`experiences = [${globs.value.split(",").map((g) => JSON.stringify(g.trim())).join(", ")}]`);
+      output.replaceChildren(toml(lines.join("\n")),
+        el("div", {class: "small muted", style: {margin: "10px 0 4px"}}, "Then declare its experiences with the method (or match the glob):"),
+        codeBlock(`from useml import exp\n\nwith exp.experience(${JSON.stringify(`${n}/first`)}, method=${JSON.stringify(n)}) as e:\n    ...`));
+    };
+    [name, description, status, globs].forEach((i) => i.addEventListener("input", compose)); compose();
+    out.push(block("A new method", el("div", {class: "editor"}, l1, l3), el("div", {class: "editor", style: {marginTop: "10px"}}, l2, l4), output));
+  } else if (route.what === "dataset") {
+    const [l1, name] = field("Name of its driver", "cifar10-c");
+    const compose = () => {
+      const list = [...new Set([...(project.datasets || []), name.value.trim() || "my-dataset"])];
+      output.replaceChildren(toml(`[project]\ndatasets = [${list.map((d) => JSON.stringify(d)).join(", ")}]`),
+        el("div", {class: "small muted", style: {margin: "10px 0 4px"}}, "A dataset is loaded by its driver; to write one:"), commandLine("useml docs datasets"));
+    };
+    name.addEventListener("input", compose); compose();
+    out.push(block("A new dataset", l1, output));
+  } else {
+    const select = el("select", {class: "select"}, methodsOf(project, pageRuns()).filter((m) => m !== "(unassigned)").map((m) =>
+      el("option", {value: m, selected: m === project.focus ? "selected" : null}, m)));
+    const compose = () => output.replaceChildren(toml(`[project]\nfocus = ${JSON.stringify(select.value)}`));
+    select.addEventListener("change", compose); compose();
+    out.push(block("The method you work on", el("label", {class: "inline-label"}, "focus", select), output));
+  }
+  out.push(el("div", {class: "tiny muted"}, "The project lives in the repository: commit the change, and every machine running it reports it at its next snapshot."));
+  body.replaceChildren(...out);
+}
+function codeBlock(text) {
+  const button = el("button", {class: "btn small", onclick: async () => {
+    try { await navigator.clipboard.writeText(text); button.textContent = "copied"; } catch (error) { button.textContent = "select it"; }
+    setTimeout(() => { button.textContent = "copy"; }, 1500); }}, "copy");
+  return el("div", {class: "code-block"}, el("pre", {}, text), button);
+}
+
+function markdown(project, runs) {
+  const lines = [`# ${project.name}`, ""];
+  if (project.description) lines.push(project.description, "");
+  if (project.focus) lines.push(`Working on: **${project.focus}**`, "");
+  lines.push("## Datasets", "");
+  const datasets = new Set([...(project.datasets || []), ...runs.flatMap((r) => (r.datasets || []).map((d) => d.split("[")[0]))]);
+  for (const d of [...datasets].sort()) lines.push(`- ${d}: ${runs.filter((r) => (r.datasets || []).some((x) => x.split("[")[0] === d)).length} runs`);
+  lines.push("", "## Methods", "");
+  for (const m of methodsOf(project, runs)) {
+    const info = (project.methods || {})[m] || {}, mine = runs.filter((r) => (r.method || "(unassigned)") === m);
+    lines.push(`- **${m}**${info.status ? ` (${info.status})` : ""}: ${info.description || ""} — ${mine.length} runs, ${new Set(mine.map((r) => r.version)).size} versions`);
+  }
+  if (runs.length) {
+    const {vary} = varying(runs), results = resultKeys(runs).slice(0, 8);
+    lines.push("", "## Runs", "", `| method | run | status | ${[...vary, ...results].join(" | ")} |`, `|${"---|".repeat(3 + vary.length + results.length)}`);
+    for (const r of runs) lines.push(`| ${r.method || ""} | ${r.experience} | ${r.status} | ${[...vary.map((k) => show(r.factors?.[k])), ...results.map((k) => typeof r.results?.[k] === "number" ? number(r.results[k]) : "")].join(" | ")} |`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+// ── wiring ──────────────────────────────────────────────────────────────────
+$("interval").value = String(interval);
+$("interval").addEventListener("change", (event) => {
+  interval = Number(event.target.value); prefs.set("interval", interval); renderLive();
+  if (interval > 0) tick(false); else clearTimeout(timer);
 });
-load().catch((error) => { $("status").textContent = `cannot load: ${error.message}`; });
+$("refresh").addEventListener("click", () => tick(true));
+$("search").addEventListener("input", (event) => { query = event.target.value; render(); });
+$("drawerClose").addEventListener("click", closeDrawer);
+$("backdrop").addEventListener("click", closeDrawer);
+window.addEventListener("hashchange", readRoute);
+document.addEventListener("visibilitychange", () => {
+  renderLive();
+  if (document.hidden) clearTimeout(timer); else if (interval > 0) tick(false);
+});
+document.addEventListener("keydown", (event) => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+  if (event.key === "Escape" && route) closeDrawer();
+  else if (!typing && (event.key === "r" || event.key === "R") && !event.metaKey && !event.ctrlKey) tick(true);
+  else if (!typing && event.key === "/") { event.preventDefault(); $("search").focus(); }
+});
+start();
 </script>
 </body>
 </html>

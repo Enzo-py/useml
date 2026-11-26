@@ -47,6 +47,10 @@ GROUPS = {
     "machine": "GPUs (name, use, memory), RAM, free disk, load",
     "setup": "useml itself: version, settings (masked), store, processed data, datasets, "
              "downloads, caches left in the home, download policy, suggested commands",
+    "projects": "the project and method of each experience, its factors (plain arguments, "
+                "configs and overrides, datasets, tags), the project's declaration; and when "
+                "a run ends, its record (factors, numbers, curves, configs), which the "
+                "dashboard keeps in its private dataset",
 }
 DEFAULT_SHARE = list(GROUPS)
 
@@ -65,6 +69,7 @@ def settings() -> dict:
         "space": table.get("space"),
         "url": table.get("url"),
         "machine": str(table.get("machine") or default_alias()),
+        "label": str(table["label"]) if table.get("label") else None,
         "share": list(share),
         "experiences": list(table.get("experiences", ["*"])),
         "roots": [Path(os.path.expandvars(str(r))).expanduser() for r in table.get("roots", [])],

@@ -1,0 +1,432 @@
+"""useml.projects — a project, its components, and a record of every run.
+
+A PROJECT is declared once, in the repository, so it is the same on every computer that
+clones it:
+
+    # useml.toml (or [tool.useml.project] in pyproject.toml)
+    [project]
+    name = "robust-vision"
+    description = "Image classifiers that survive corrupted inputs."
+    focus = "wide"                         # the method being worked on now
+    datasets = ["cifar10", "cifar10-c"]    # the datasets of the project (more are found in runs)
+
+    [project.methods.baseline]
+    description = "ResNet-50, standard training."
+    status = "reference"                   # free text: idea, active, reference, dropped…
+
+    [project.methods.wide]
+    description = "Wider blocks, same budget."
+    experiences = ["vision/wide*"]         # which experiences try it (globs)
+
+An experience belongs to a method by `exp.experience(name, method="wide")`, else by the
+`experiences` globs of a method, else to none ("unassigned").
+
+A RUN is one execution of an experience with one declaration (its fingerprint). When it
+ends, `record(experience)` describes it:
+
+    factors   what varies from one run to another: the steps' plain arguments
+              (`train.epochs: 10`), the config each step reads and its overrides
+              (`train.model: resnet50`, `train.model.width: 2`), the datasets, the tags
+    results   every number of the steps' JSON outputs (`evaluate.accuracy: 0.91`), and the
+              last / best value of every curve (`train.loss.last`)
+    version   a hash of the steps' code (two runs with the same version ran the same code;
+              their differences are only their factors) and the git commit
+
+A record never holds code: only names (`module:function`), numbers, configs (YAML), and
+masked texts. `useml project show` / `useml project export` read them on this machine;
+the monitor keeps them in a private dataset, for every machine (see `useml docs projects`).
+"""
+from __future__ import annotations
+
+import fnmatch
+import hashlib
+import json
+import math
+import re
+import time
+from pathlib import Path
+
+FORMAT = "useml-run/1"
+MAX_CURVE_POINTS = 120
+MAX_FACTOR_TEXT = 120
+LOWER_IS_BETTER = re.compile(r"(loss|error|err\b|perplexity|ppl|mse|mae|rmse|wer|cer|fid|"
+                             r"time|seconds|latency|memory|regret|distance)", re.I)
+
+
+# ── the declaration ───────────────────────────────────────────────────────────
+
+def declared(start=None) -> dict | None:
+    """The `[project]` of the nearest useml settings above `start`, normalised; None when
+    there is none."""
+    from ._project import section
+
+    folder, table = section("project", start)
+    if folder is None or not table:
+        return None
+    name = str(table.get("name") or folder.name)
+    methods = {}
+    for method, entry in (table.get("methods") or {}).items():
+        entry = entry or {}
+        methods[str(method)] = {"description": str(entry.get("description", "")),
+                                "status": str(entry.get("status", "")),
+                                "experiences": [str(g) for g in entry.get("experiences", [])]}
+    return {"name": name, "description": str(table.get("description", "")),
+            "focus": str(table["focus"]) if table.get("focus") else None,
+            "datasets": [str(d) for d in table.get("datasets", [])],
+            "methods": methods, "folder": str(folder)}
+
+
+def method_of(name: str, spec: dict, project: dict | None) -> str | None:
+    """The method an experience tries: declared in the experience, else matched by a
+    method's globs, else None."""
+    if spec.get("method"):
+        return str(spec["method"])
+    for method, entry in ((project or {}).get("methods") or {}).items():
+        if any(fnmatch.fnmatch(name, glob) for glob in entry.get("experiences", [])):
+            return method
+    return None
+
+
+# ── what varies, what came out ────────────────────────────────────────────────
+
+def _scalar(value) -> bool:
+    return value is None or isinstance(value, (bool, int, float)) or \
+        (isinstance(value, str) and len(value) <= MAX_FACTOR_TEXT)
+
+
+def _flatten(prefix: str, value, out: dict) -> None:
+    """Plain values of `value` under dotted keys; references to other steps, paths and
+    outputs are not factors (they are the plumbing, not a choice)."""
+    if isinstance(value, dict):
+        if len(value) == 1:
+            (kind, body), = value.items()
+            if kind == "$config":
+                out[prefix] = body.get("name")
+                for key, item in sorted((body.get("overrides") or {}).items()):
+                    _flatten(f"{prefix}.{key}", item, out)
+                return
+            if kind == "$dataset":
+                split = body.get("split")
+                out[prefix] = body.get("name", "") + (f"[{split}]" if split else "")
+                return
+            if kind == "$data":
+                out[prefix] = body.get("name")
+                return
+            if kind in ("$step", "$output", "$path", "$experience"):
+                return
+        for key, item in sorted(value.items()):
+            _flatten(f"{prefix}.{key}", item, out)
+        return
+    if isinstance(value, list):
+        if all(_scalar(item) for item in value) and len(json.dumps(value)) <= MAX_FACTOR_TEXT:
+            out[prefix] = json.dumps(value)
+        else:
+            for index, item in enumerate(value):
+                _flatten(f"{prefix}[{index}]", item, out)
+        return
+    if _scalar(value):
+        out[prefix] = value
+
+
+def factors(spec: dict) -> dict:
+    """{dotted key: plain value}: every choice the declaration makes."""
+    out: dict = {}
+    for step in spec.get("steps", []):
+        names = step.get("arg_names") or []
+        for index, value in enumerate(step.get("args") or []):
+            label = names[index] if index < len(names) else f"arg{index}"
+            _flatten(f"{step['name']}.{label}", value, out)
+        for key, value in (step.get("kwargs") or {}).items():
+            _flatten(f"{step['name']}.{key}", value, out)
+    for key, value in (spec.get("tags") or {}).items():
+        _flatten(f"tag.{key}", value, out)
+    return out
+
+
+def _numbers(prefix: str, value, out: dict, depth: int = 0) -> None:
+    if depth > 6 or len(out) > 400:
+        return
+    if isinstance(value, bool):
+        out[prefix] = float(value)
+    elif isinstance(value, (int, float)):
+        if math.isfinite(value):
+            out[prefix] = value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _numbers(f"{prefix}.{key}", item, out, depth + 1)
+    elif isinstance(value, list) and len(value) <= 20:
+        for index, item in enumerate(value):
+            _numbers(f"{prefix}[{index}]", item, out, depth + 1)
+
+
+def results(experience) -> dict:
+    """{dotted key: number}: the numbers of the steps' JSON outputs."""
+    out: dict = {}
+    for step in experience.steps():
+        path = experience.path(step["name"]) / "output.json"
+        if not step["done"] or not path.exists() or path.stat().st_size > 256 * 1024:
+            continue
+        try:
+            _numbers(step["name"], json.loads(path.read_text()), out)
+        except ValueError:
+            continue
+    return out
+
+
+def curves(experience) -> tuple[dict, dict]:
+    """({step: points (at most MAX_CURVE_POINTS)}, {"<step>.<name>.last|best": number})."""
+    from .monitor._snapshot import _metrics
+
+    drawn, summary = {}, {}
+    for step in experience.steps():
+        points = _metrics(experience.path(step["name"]))
+        if not points:
+            continue
+        if len(points) > MAX_CURVE_POINTS:
+            stride = len(points) / MAX_CURVE_POINTS
+            points = [points[int(i * stride)] for i in range(MAX_CURVE_POINTS)] + [points[-1]]
+        drawn[step["name"]] = points
+        names = {key for point in points for key in point if key != "step"}
+        for name in sorted(names):
+            values = [p[name] for p in points if isinstance(p.get(name), (int, float))]
+            if not values:
+                continue
+            summary[f"{step['name']}.{name}.last"] = values[-1]
+            summary[f"{step['name']}.{name}.best"] = (min if LOWER_IS_BETTER.search(name)
+                                                      else max)(values)
+    return drawn, summary
+
+
+def _code_version(spec: dict) -> str:
+    codes = "|".join(f"{s['function']}={s.get('code', '')}" for s in spec.get("steps", []))
+    return hashlib.sha256(codes.encode()).hexdigest()[:8]
+
+
+def _git(experience) -> dict | None:
+    folders = sorted((experience.folder / "code").glob("*/code.json"))
+    if not folders:
+        return None
+    try:
+        info = json.loads(folders[-1].read_text())
+    except (OSError, ValueError):
+        return None
+    git = info.get("git") or None
+    if not git:
+        return None
+    return {"commit": str(git.get("commit", ""))[:10], "dirty": bool(git.get("dirty"))}
+
+
+# ── the declaration, written back as Python ──────────────────────────────────
+
+def _python(value, steps: dict, imports: set) -> str:
+    """A declared argument → the Python that declares it again."""
+    if isinstance(value, dict) and len(value) == 1:
+        (kind, body), = value.items()
+        if kind == "$step":
+            return steps.get(body, body.replace("-", "_").replace(".", "_"))
+        if kind == "$config":
+            imports.add("config")
+            overrides = body.get("overrides") or {}
+            extra = f", overrides={overrides!r}" if overrides else ""
+            kind_part = f", {body['kind']!r}" if body.get("kind") else ""
+            return f"config.load({body.get('name')!r}{kind_part}{extra})"
+        if kind == "$dataset":
+            imports.add("datasets")
+            split = f", split={body['split']!r}" if body.get("split") else ""
+            field = f".field({body['field']!r})" if body.get("field") else ""
+            return f"datasets.load({body.get('name')!r}{split}){field}"
+        if kind == "$data":
+            imports.add("data")
+            return f"data.load({body.get('name')!r})"
+        if kind == "$path":
+            imports.add("Path")
+            return f"Path({body!r})"
+        if kind == "$output":
+            imports.add("exp")
+            return f"exp.get({(body.get('experience', '') + '/' + body.get('step', '')).strip('/')!r})"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{k!r}: {_python(v, steps, imports)}" for k, v in value.items()) + "}"
+    if isinstance(value, list):
+        return "[" + ", ".join(_python(v, steps, imports) for v in value) + "]"
+    return repr(value)
+
+
+def declaration_code(spec: dict, name: str, method: str | None = None) -> str:
+    """The `with exp.experience(...)` block that declares `spec` again under `name`: the
+    start of an alternative (change a value, rerun). Arguments whose parameter name is
+    known are written by name (`lr=0.003`), so each value says what it is."""
+    steps, imports, lines, functions = {}, {"exp"}, [], {}
+    for step in spec.get("steps", []):
+        module, _, function = step["function"].partition(":")
+        functions.setdefault(module, set()).add(function.split(".")[0])
+    taken = {n for names in functions.values() for n in names} | {"e", "exp", "config", "data",
+                                                                   "datasets", "Path"}
+    for step in spec.get("steps", []):
+        module, _, function = step["function"].partition(":")
+        local = function.split(".")[-1]
+        names = step.get("arg_names") or []
+        values = [_python(value, steps, imports) for value in step.get("args") or []]
+        # All by name when every name is known, else all by position (never a mix).
+        named = len(names) == len(values) and all(n.isidentifier() for n in names)
+        args = [f"{n}={v}" for n, v in zip(names, values)] if named else values
+        kwargs = [f"{k}={_python(v, steps, imports)}" for k, v in (step.get("kwargs") or {}).items()]
+        variable = re.sub(r"\W", "_", step["name"])
+        if not variable.isidentifier() or variable in taken:
+            variable = f"{variable}_out" if variable.isidentifier() else f"step_{len(steps)}"
+        taken.add(variable)
+        call = ", ".join([local if "." not in function else function, *args, *kwargs,
+                          f"name={step['name']!r}"])
+        lines.append(f"    {variable} = e.step({call})")
+        steps[step["name"]] = variable
+    options = [repr(name)]
+    if method:
+        options.append(f"method={method!r}")
+    if spec.get("tags"):
+        options.append(f"tags={spec['tags']!r}")
+    head = []
+    useml = sorted(i for i in imports if i != "Path")
+    head.append(f"from useml import {', '.join(useml)}")
+    if "Path" in imports:
+        head.insert(0, "from pathlib import Path")
+    for module, names in sorted(functions.items()):
+        head.append(f"from {module} import {', '.join(sorted(names))}")
+    return "\n".join(head + ["", f"with exp.experience({', '.join(options)}) as e:", *lines]) + "\n"
+
+
+# ── a run's record ────────────────────────────────────────────────────────────
+
+ENDED = ("done", "failed", "died", "stopped")
+
+
+def run_id(project: str, experience) -> str:
+    spec = experience.spec or {}
+    state = experience.state
+    try:
+        ended = int((experience.folder / "state.json").stat().st_mtime)
+    except OSError:
+        ended = 0
+    key = f"{project}|{experience.name}|{spec.get('fingerprint')}|{state.get('status')}|{ended}"
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
+def record(experience, project: dict | None = None, *, machine: str | None = None) -> dict:
+    """Everything worth keeping about one run of `experience` (see the module)."""
+    from . import __version__
+
+    project = project if project is not None else declared(experience.folder)
+    spec = experience.spec or {}
+    state = experience.state
+    steps = experience.steps()
+    drawn, summary = curves(experience)
+    try:
+        ended = (experience.folder / "state.json").stat().st_mtime
+    except OSError:
+        ended = None
+    started = state.get("started")
+    error = None
+    if state.get("status") in ("failed", "died", "stopped"):
+        error = {"meaning": (state.get("exit") or {}).get("meaning"),
+                 "message": "\n".join(str(state.get("error") or "").splitlines()[-12:])}
+    from .monitor._snapshot import _configs, _data
+
+    code = {step["name"]: step.get("code") for step in spec.get("steps", [])}
+    name = (project or {}).get("name")
+    return {
+        "format": FORMAT, "id": run_id(name or "", experience), "project": name,
+        "method": method_of(experience.name, spec, project), "experience": experience.name,
+        "note": spec.get("note", ""), "tags": spec.get("tags") or {},
+        "run": spec.get("fingerprint"), "version": _code_version(spec), "git": _git(experience),
+        "status": state.get("status", "new"), "started": started, "ended": ended,
+        "seconds": (ended - started) if ended and started else None,
+        "machine": machine, "useml": __version__, "recorded": time.time(),
+        "steps": [{"name": s["name"], "function": s["function"], "done": s["done"],
+                   "seconds": s["seconds"], "code": code.get(s["name"])} for s in steps],
+        "declaration": declaration_code(spec, experience.name,
+                                        method_of(experience.name, spec, project)),
+        "factors": factors(spec), "results": {**results(experience), **summary},
+        "curves": drawn, "configs": _configs(spec), "datasets": _data(spec), "error": error,
+    }
+
+
+def runs(start=None, *, ended_only: bool = True) -> list[dict]:
+    """Records of this project's experiences on this machine, newest first."""
+    from . import exp
+
+    project = declared(start)
+    if project is None:
+        return []
+    out = []
+    for experience in exp.ls():
+        if ended_only and experience.status not in ENDED:
+            continue
+        out.append(record(experience, project))
+    return sorted(out, key=lambda r: r.get("ended") or 0, reverse=True)
+
+
+# ── export ────────────────────────────────────────────────────────────────────
+
+def summary(project: dict, records: list[dict]) -> dict:
+    """The project as data: its declaration, its datasets and methods with what was run."""
+    datasets: dict = {name: {"declared": True, "runs": 0, "methods": set()}
+                      for name in project.get("datasets", [])}
+    methods: dict = {name: {**entry, "runs": 0, "versions": set(), "last": None}
+                     for name, entry in project.get("methods", {}).items()}
+    for entry in records:
+        method = entry.get("method") or "(unassigned)"
+        slot = methods.setdefault(method, {"description": "", "status": "", "experiences": [],
+                                           "runs": 0, "versions": set(), "last": None})
+        slot["runs"] += 1
+        slot["versions"].add(entry.get("version"))
+        slot["last"] = max(slot["last"] or 0, entry.get("ended") or 0) or None
+        for dataset in entry.get("datasets", []):
+            base = dataset.split("[")[0]
+            info = datasets.setdefault(base, {"declared": False, "runs": 0, "methods": set()})
+            info["runs"] += 1
+            info["methods"].add(method)
+    for info in datasets.values():
+        info["methods"] = sorted(info["methods"])
+    for slot in methods.values():
+        slot["versions"] = len(slot["versions"] - {None})
+    return {"name": project["name"], "description": project.get("description", ""),
+            "focus": project.get("focus"), "datasets": datasets, "methods": methods,
+            "runs": len(records)}
+
+
+def to_markdown(project: dict, records: list[dict]) -> str:
+    """A readable export: datasets, methods (the focus first), and every run's factors that
+    vary and results."""
+    data = summary(project, records)
+    lines = [f"# {data['name']}", ""]
+    if data["description"]:
+        lines += [data["description"], ""]
+    if data["focus"]:
+        lines += [f"Working on: **{data['focus']}**", ""]
+    lines += ["## Datasets", ""]
+    for name, info in sorted(data["datasets"].items()):
+        used = f"{info['runs']} runs ({', '.join(info['methods'])})" if info["runs"] else "no run yet"
+        lines.append(f"- {name}: {used}")
+    lines += ["", "## Methods", ""]
+    order = sorted(data["methods"], key=lambda m: (m != data["focus"], m))
+    for name in order:
+        info = data["methods"][name]
+        status = f" ({info['status']})" if info.get("status") else ""
+        lines.append(f"- **{name}**{status}: {info.get('description') or ''} — "
+                     f"{info['runs']} runs, {info['versions']} code versions")
+    if records:
+        keys = sorted({k for r in records for k in r.get("factors", {})})
+        varying = [k for k in keys if len({json.dumps(r["factors"].get(k)) for r in records}) > 1]
+        metrics = sorted({k for r in records for k in r.get("results", {})})[:8]
+        lines += ["", "## Runs", "",
+                  "| method | experience | status | " + " | ".join(varying + metrics) + " |",
+                  "|" + "---|" * (3 + len(varying) + len(metrics))]
+        for r in records:
+            cells = [r.get("method") or "", r["experience"], r["status"]]
+            cells += [str(r["factors"].get(k, "")) for k in varying]
+            cells += [f"{r['results'][k]:.4g}" if k in r.get("results", {}) else ""
+                      for k in metrics]
+            lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
+__all__ = ["declared", "method_of", "factors", "results", "curves", "record", "runs",
+           "run_id", "summary", "to_markdown", "ENDED", "LOWER_IS_BETTER"]

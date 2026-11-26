@@ -37,7 +37,8 @@ SCHEMA = {
     "exp.notify": ("string", "command run when an experience ends or crashes"),
     "monitor.space": ("string", "the private Space of the dashboard (owner/name)"),
     "monitor.url": ("string", "the dashboard URL, if not a Space"),
-    "monitor.machine": ("string", "the name shown for this machine"),
+    "monitor.machine": ("string", "this machine's identifier on the dashboard"),
+    "monitor.label": ("string", "the name shown for this machine (any text)"),
     "monitor.share": ("list", "groups sent to the dashboard"),
     "monitor.experiences": ("list", "globs of experience names reported"),
     "monitor.roots": ("list", "experiences folders reported"),
@@ -241,3 +242,118 @@ def listing() -> list[dict]:
         value = (config if table == "" else config.get(table, {}) or {}).get(name)
         out.append({"key": key, "kind": kind, "meaning": meaning, "value": value})
     return out
+
+
+# ── the guided editor: `useml settings edit` ─────────────────────────────────
+
+#: The sections, in the order the editor walks them.
+SECTIONS = ("root", "store", "data", "datasets", "exp", "hub", "env", "monitor")
+
+
+def effective(key: str):
+    """Where useml actually writes for a folder key, set or not (None for other keys)."""
+    try:
+        if key == "root":
+            from . import paths
+            return paths.root()
+        if key == "store.root":
+            from .store import default_root
+            return default_root()
+        if key == "data.root":
+            from .data._catalog import data_root
+            return data_root()
+        if key == "datasets.root":
+            from .datasets import root
+            return root()
+        if key == "exp.root":
+            from .exp import root
+            return root()
+    except Exception:                                        # noqa: BLE001
+        return None
+    return None
+
+
+def guided(section: str | None = None, *, ask=input, say=print) -> list[str]:
+    """Walk the settings one by one (all but `monitor`, or one section), ask a new value
+    for each, show the changes, write them after a yes, then check the machine.
+
+    At each question: Enter keeps the value, `-` removes it, `q` stops (nothing written).
+    Every answer is checked like `useml settings set`. Returns the keys changed."""
+    from . import paths
+
+    raw_ask = ask
+
+    def ask(prompt: str) -> str:                       # Ctrl-D or Ctrl-C: stop, like `q`
+        try:
+            return raw_ask(prompt)
+        except (EOFError, KeyboardInterrupt):
+            say("")
+            return "q"
+
+    if section and section not in SECTIONS:
+        raise SettingsError(f"unknown section {section!r}; known: {', '.join(SECTIONS)}")
+    sections = [section] if section else [s for s in SECTIONS if s != "monitor"]
+    config = paths.config()
+    say(f"Machine config: {paths.config_path()}")
+    say("Enter keeps the value, '-' removes it, 'q' stops without writing anything.\n")
+    changes: dict = {}
+
+    def question(key: str, kind: str, meaning: str) -> bool:
+        current = get(key)
+        now = effective(key)
+        shown = format_value(current) if current is not None else \
+            (f"not set (now: {now})" if now is not None else "not set")
+        say(f"{key}  —  {meaning}")
+        while True:
+            answer = ask(f"  {shown} > ").strip()
+            if answer == "q":
+                return False
+            if answer == "":
+                return True
+            if answer == "-":
+                if current is not None:
+                    changes[key] = None
+                return True
+            try:
+                changes[key] = parse_value(key, answer)
+                return True
+            except SettingsError as error:
+                say(f"  {error}")
+
+    for name in sections:
+        if name == "env":
+            say("env.<VARIABLE>  —  a cache placed elsewhere than under the root")
+            for variable in (config.get("env") or {}):
+                if not question(f"env.{variable}", "path", "a cache placed elsewhere"):
+                    say("Stopped; nothing written.")
+                    return []
+            while True:
+                variable = ask("  another variable to place (e.g. HF_HOME; Enter: none) > ").strip()
+                if not variable:
+                    break
+                if variable == "q":
+                    say("Stopped; nothing written.")
+                    return []
+                if not question(f"env.{variable}", "path", f"where {variable} points"):
+                    say("Stopped; nothing written.")
+                    return []
+            continue
+        for key, (kind, meaning) in SCHEMA.items():
+            if key == "env.*" or not (key == name or key.startswith(f"{name}.")):
+                continue
+            if not question(key, kind, meaning):
+                say("Stopped; nothing written.")
+                return []
+    if not changes:
+        say("\nNothing changed.")
+        return []
+    say("\nChanges:")
+    for key, value in changes.items():
+        say(f"  {key} = {format_value(value)}" if value is not None else f"  {key} removed")
+    if ask("Write them? [Y/n] ").strip().lower() not in ("", "y", "yes", "o", "oui"):
+        say("Nothing written.")
+        return []
+    for key, value in changes.items():
+        edit(key, value, remove=value is None)
+    say(f"Written ({paths.config_path()}; previous: config.toml.bak).")
+    return list(changes)

@@ -234,6 +234,8 @@ def describe_machine(config: dict, roots: list[Path]) -> dict:
     from .. import __version__, paths
 
     out = {"alias": config["machine"], "useml": __version__, "time": time.time()}
+    if config.get("label"):
+        out["label"] = config["label"]
     if "machine" not in config["share"]:
         return out
     out["gpus"] = _gpus()
@@ -330,18 +332,102 @@ def describe_setup(roots: list[Path]) -> dict:
             info["suggestions"].append("loginctl enable-linger $USER")
     except Exception:                                        # noqa: BLE001
         pass
+    try:
+        from .._setup import checks
+
+        info["checks"] = checks()
+        for entry in info["checks"]:
+            if entry["fix"] and entry["level"] != "ok" and entry["fix"] not in info["suggestions"]:
+                info["suggestions"].append(entry["fix"])
+    except Exception as error:                               # noqa: BLE001
+        info["checks"] = [{"level": "warn", "area": "check", "message": f"useml check: {error}",
+                           "fix": "useml check"}]
     return info
+
+
+def _projects_by_root(roots: list[Path]) -> dict:
+    """{experiences folder: its project's declaration or None}."""
+    from .. import projects
+
+    out = {}
+    for root in roots:
+        try:
+            out[root] = projects.declared(root if root.is_dir() else root.parent)
+        except Exception:                                    # noqa: BLE001 - a broken toml
+            out[root] = None
+    return out
+
+
+def _reported(config: dict, roots: list[Path]):
+    """(experience, its project or None) for every experience this machine reports."""
+    declared = _projects_by_root(roots)
+    for root in roots:
+        for experience in _experiences([root]):
+            if wanted(experience.name, config["experiences"]):
+                yield experience, declared.get(root)
+
+
+def _public(project: dict) -> dict:
+    return {key: value for key, value in project.items() if key != "folder"}
 
 
 def snapshot(*, full: bool = True, config: dict | None = None) -> dict:
     """What this machine would send now, filtered and masked."""
+    from .. import projects
+
     config = config or load_settings()
     roots = experience_roots(config)
-    experiences = [describe_experience(e, config, full=full) for e in _experiences(roots)
-                   if wanted(e.name, config["experiences"])]
+    share_projects = "projects" in config["share"]
+    experiences, declarations = [], {}
+    for experience, project in _reported(config, roots):
+        out = describe_experience(experience, config, full=full)
+        if share_projects and project:
+            declarations[project["name"]] = _public(project)
+            spec = experience.spec or {}
+            out["project"] = project["name"]
+            out["method"] = projects.method_of(experience.name, spec, project)
+            out["factors"] = projects.factors(spec)
+            out["version"] = projects._code_version(spec)
+        experiences.append(out)
     raw = {"machine": describe_machine(config, roots), "experiences": experiences,
            "share": config["share"], "full": full}
+    if declarations:
+        raw["projects"] = list(declarations.values())
     if full and "setup" in config["share"]:
         raw["setup"] = describe_setup(roots)
-    projects = [root.parent for root in roots]
-    return Masker(projects=projects, extra=config["redact"]).apply(raw)
+    return masker(config, roots).apply(raw)
+
+
+def masker(config: dict, roots: list[Path]) -> Masker:
+    from .. import paths
+
+    home = paths.home().expanduser().resolve()
+    # An experiences folder inside useml's own folder belongs to no project: it is masked
+    # as <useml>, not <project>.
+    folders = [root.parent for root in roots
+               if not (root.resolve() == home or home in root.resolve().parents)]
+    return Masker(projects=folders, extra=config["redact"])
+
+
+MAX_RECORDS_PER_PUSH = 10
+
+
+def pending_records(config: dict, sent: set) -> list[dict]:
+    """Records of ended runs of a project not sent yet (at most MAX_RECORDS_PER_PUSH),
+    masked like the snapshot. Empty unless the group "projects" is shared."""
+    from .. import projects
+
+    if "projects" not in config["share"]:
+        return []
+    roots = experience_roots(config)
+    out = []
+    for experience, project in _reported(config, roots):
+        if project is None or experience.status not in projects.ENDED:
+            continue
+        if projects.run_id(project["name"], experience) in sent:
+            continue
+        out.append(projects.record(experience, project,
+                                   machine=config.get("label") or config["machine"]))
+        if len(out) >= MAX_RECORDS_PER_PUSH:
+            break
+    return masker(config, roots).apply(out) if out else []

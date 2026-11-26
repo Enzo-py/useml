@@ -245,8 +245,9 @@ def test_agent_answers_a_refresh_within_seconds(experiences, served):
 # ── deploying ─────────────────────────────────────────────────────────────────
 
 class FakeApi:
-    created, uploaded = [], []
+    created, uploaded, variables = [], [], []
     public = False
+    public_dataset = False
 
     def __init__(self, token=None):
         pass
@@ -263,11 +264,18 @@ class FakeApi:
     def upload_folder(self, **options):
         FakeApi.uploaded.append(options)
 
+    def dataset_info(self, repo_id):
+        return type("Info", (), {"private": not FakeApi.public_dataset})()
+
+    def add_space_variable(self, repo_id, key, value):
+        FakeApi.variables.append((repo_id, key, value))
+
 
 @pytest.fixture
 def fake_hub(monkeypatch):
     hub = pytest.importorskip("huggingface_hub")
-    FakeApi.created, FakeApi.uploaded, FakeApi.public = [], [], False
+    FakeApi.created, FakeApi.uploaded, FakeApi.variables = [], [], []
+    FakeApi.public = FakeApi.public_dataset = False
     monkeypatch.setattr(hub, "HfApi", FakeApi)
     monkeypatch.setenv("HF_TOKEN", "hf_test")
     return FakeApi
@@ -283,6 +291,25 @@ def test_deploy_creates_a_private_docker_space(fake_hub, tmp_path):
     assert result["url"] == "https://alice-useml-monitor.hf.space"
     assert 'space = "alice/useml-monitor"' in (tmp_path / "machine.toml").read_text()
     assert monitor.status()["dashboard"] == "https://alice-useml-monitor.hf.space"
+    dataset, options = fake_hub.created[1]
+    assert dataset == "alice/useml-monitor-history" and options == {"repo_type": "dataset",
+                                                                     "private": True,
+                                                                     "exist_ok": True}
+    assert fake_hub.variables == [("alice/useml-monitor", "USEML_HISTORY_REPO",
+                                   "alice/useml-monitor-history")]
+    assert "USEML_HISTORY_TOKEN" in " ".join(result["history_steps"])
+
+
+def test_deploy_refuses_a_public_history(fake_hub):
+    fake_hub.public_dataset = True
+    with pytest.raises(RuntimeError, match="PUBLIC"):
+        monitor.deploy()
+    assert fake_hub.variables == []
+
+
+def test_deploy_without_history(fake_hub):
+    assert monitor.deploy(history=False)["history"] is None
+    assert len(fake_hub.created) == 1
 
 
 def test_deploy_refuses_a_public_space(fake_hub):
@@ -324,3 +351,82 @@ def test_space_keeps_the_setup_on_light_pushes(monkeypatch):
                 "snapshot": {"experiences": []}})
     state = client.get("/api/state?token=local-secret").json()
     assert state["machines"][0]["snapshot"]["setup"] == {"useml": "x"}
+
+
+# ── the page's requests: light state, details on demand, light refresh ───────
+
+def _push(client, alias, snapshot, full=True):
+    return client.post("/agent/push", headers={"X-Useml-Token": "local-secret"},
+                       json={"machine": alias, "full": full, "snapshot": snapshot})
+
+
+def test_light_state_leaves_heavy_parts_for_the_detail_requests(monkeypatch):
+    client = TestClient(load_app(monkeypatch).app)
+    client.get("/?token=local-secret")
+    heavy = {"name": "e", "status": "done", "log": ["x"], "results": {"s": 1},
+             "figures": [{"png": "AAAA"}], "configs": [{"name": "c"}]}
+    _push(client, "m", {"experiences": [heavy], "setup": {"useml": "1"}})
+    light = client.get("/api/state?light=1").json()["machines"][0]["snapshot"]
+    assert light["experiences"] == [{"name": "e", "status": "done", "log": ["x"]}]
+    assert light["has_setup"] is True and "setup" not in light
+    assert client.get("/api/state").json()["machines"][0]["snapshot"]["setup"] == {"useml": "1"}
+    assert client.get("/api/experience", params={"machine": "m", "name": "e"}).json() == heavy
+    assert client.get("/api/experience", params={"machine": "m", "name": "?"}).status_code == 404
+    assert client.get("/api/setup", params={"machine": "m"}).json() == {"useml": "1"}
+    assert client.get("/api/setup", params={"machine": "?"}).status_code == 404
+
+
+def test_forget_removes_a_machine_from_memory_only(monkeypatch):
+    client = TestClient(load_app(monkeypatch).app)
+    client.get("/?token=local-secret")
+    _push(client, "old-name", {"experiences": []})
+    assert client.post("/api/forget", json={"machine": "old-name"}).json() == {"ok": True}
+    assert client.get("/api/state").json()["machines"] == []
+    assert client.post("/api/forget", json={}).status_code == 400
+
+
+def test_refresh_kind_reaches_the_agent_and_silent_machines_do_not_slow_it(monkeypatch):
+    module = load_app(monkeypatch)
+    module.WAIT_SECONDS = 0.2
+    client = TestClient(module.app)
+    client.get("/?token=local-secret")
+    _push(client, "quiet", {"experiences": []})
+    module._machines["quiet"]["polled"] = time.time() - 3600           # its agent is gone
+    started = time.time()
+    client.post("/api/refresh", json={"full": False})
+    assert time.time() - started < 1.0
+    _push(client, "m", {"experiences": []})
+    module._pending["m"] = "light"
+    answer = client.get("/agent/wait?machine=m", headers={"X-Useml-Token": "local-secret"})
+    assert answer.json() == {"command": "refresh", "full": False}
+    module._pending["m"] = "full"
+    answer = client.get("/agent/wait?machine=m", headers={"X-Useml-Token": "local-secret"})
+    assert answer.json() == {"command": "refresh", "full": True}
+
+
+def test_agent_pushes_the_kind_it_is_asked(experiences, monkeypatch):
+    agent = monitor.Agent(url="http://127.0.0.1:1", token="t")
+    pushed = []
+    monkeypatch.setattr(agent, "push", lambda *, full: pushed.append(full))
+    for answer in ({"command": "refresh", "full": False}, {"command": "refresh"}):
+        monkeypatch.setattr(agent, "_request", lambda *a, answer=answer, **k: answer)
+        assert agent.step() == "refresh"
+    assert pushed == [False, True]                    # an old dashboard means full
+
+
+def test_machine_label_is_sent(experiences, tmp_path):
+    machine_config(tmp_path, '[monitor]\nlabel = "GPU server"\n')
+    assert monitor.snapshot(full=False)["machine"]["label"] == "GPU server"
+
+
+def test_setup_carries_the_checks_and_light_state_their_count(experiences, monkeypatch):
+    setup = monitor.snapshot()["setup"]
+    assert setup["checks"] and {"level", "area", "message", "fix"} == set(setup["checks"][0])
+    client = TestClient(load_app(monkeypatch).app)
+    client.get("/?token=local-secret")
+    checks = [{"level": "fail", "area": "x", "message": "m", "fix": "f"},
+              {"level": "warn", "area": "x", "message": "m", "fix": None},
+              {"level": "ok", "area": "x", "message": "m", "fix": None}]
+    _push(client, "m", {"experiences": [], "setup": {"checks": checks}})
+    light = client.get("/api/state?light=1").json()["machines"][0]["snapshot"]
+    assert light["health"] == {"warn": 1, "fail": 1}

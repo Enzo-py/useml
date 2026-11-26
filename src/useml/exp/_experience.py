@@ -315,9 +315,18 @@ def _alive(pid) -> bool:
 
 class Builder:
     def __init__(self, name: str, *, note: str = "", run: bool = True, detach: bool = True,
-                 follow: bool = True, gpu=None) -> None:
+                 follow: bool = True, gpu=None, method: str | None = None,
+                 tags: dict | None = None) -> None:
         self.name = _check_name(name)
         self.note = note
+        # The project's method this experience tries, and free labels (`{"variant": "no-aug"}`).
+        # Neither changes the fingerprint: they describe, they do not compute.
+        self.method = method
+        self.tags = dict(tags or {})
+        try:
+            json.dumps(self.tags)
+        except TypeError:
+            raise RefError(f"experience {name!r}: tags must be plain values") from None
         self.options = {"run": run, "detach": detach, "follow": follow, "gpu": gpu}
         self._steps: list = []
         self._open = False
@@ -358,7 +367,8 @@ class Builder:
             ref.name = name
         target = getattr(fn, "target", fn)
         self._steps.append({"ref": ref, "function": path, "args": declared_args,
-                            "kwargs": declared_kwargs, "code": code_hash(target)})
+                            "kwargs": declared_kwargs, "code": code_hash(target),
+                            "arg_names": _positional_names(target, len(args))})
         return ref
 
     def build(self) -> Experience:
@@ -389,8 +399,10 @@ class Builder:
             fingerprints[entry["ref"].name] = fingerprint
             steps.append({"name": entry["ref"].name, "function": entry["function"],
                           "args": args, "kwargs": kwargs, "reads": upstream,
-                          "fingerprint": fingerprint, "code": entry["code"]})
+                          "fingerprint": fingerprint, "code": entry["code"],
+                          "arg_names": entry["arg_names"]})
         spec = {"format": FORMAT, "name": self.name, "note": self.note, "steps": steps,
+                "method": self.method, "tags": self.tags,
                 "fingerprint": hashlib.sha256("|".join(fingerprints.values()).encode())
                 .hexdigest()[:12], "declared": time.time()}
         folder = self.experience.folder
@@ -417,6 +429,27 @@ class Builder:
         if experience is not None and not item.startswith("_"):
             return getattr(experience, item)
         raise AttributeError(item)
+
+
+def _positional_names(function, count: int) -> list | None:
+    """The parameter names the first `count` positional arguments fill (for reading a
+    declaration: `train.lr` rather than `train.arg0`). None when they cannot be known."""
+    import inspect
+
+    try:
+        parameters = list(inspect.signature(function).parameters.values())
+    except (TypeError, ValueError):
+        return None
+    names = []
+    for parameter in parameters:
+        if len(names) == count:
+            break
+        if parameter.kind == parameter.VAR_POSITIONAL:
+            names += [f"{parameter.name}[{i}]" for i in range(count - len(names))]
+            break
+        if parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD):
+            names.append(parameter.name)
+    return names if len(names) == count else None
 
 
 def experience(name: str, **options) -> Builder:

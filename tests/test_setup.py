@@ -163,3 +163,101 @@ def test_check_reports_unresolved_types(legacy_project, capsys):
     out = capsys.readouterr().out
     assert "TorchThing" in out and "✗" in out and code == 1
     assert "configs" in out and "experiences" in out
+
+
+# ── structured checks: an area, a level, the command that fixes it ───────────
+
+@pytest.fixture
+def machine(tmp_path, monkeypatch):
+    """A machine with its own config, a root, and a project with no configs."""
+    config_file = tmp_path / "machine.toml"
+    monkeypatch.setenv("USEML_CONFIG", str(config_file))
+    for variable in ("USEML_ROOT", "USEML_STORE_ROOT", "USEML_DATA_ROOT",
+                     "USEML_DATASETS_ROOT", "USEML_EXP_ROOT"):
+        monkeypatch.delenv(variable, raising=False)
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(config, "_DEFAULT", None)
+    return config_file
+
+
+def _by_message(found, text):
+    return [entry for entry in found if text in entry["message"]]
+
+
+def test_unknown_and_mistyped_keys_are_failures_with_a_fix(machine, tmp_path):
+    machine.write_text(f'root = "{tmp_path / "root"}"\n[monitor]\nsahre = ["status"]\n'
+                       'log_lines = "many"\n')
+    found = _setup.checks()
+    assert all(set(entry) == {"level", "area", "message", "fix"} for entry in found)
+    typo = _by_message(found, "monitor.sahre")[0]
+    assert typo["level"] == "fail" and typo["fix"] == "useml settings unset monitor.sahre"
+    assert "Did you mean monitor.share" in typo["message"]
+    assert _by_message(found, "whole number")[0]["fix"] == "useml settings unset monitor.log_lines"
+    from useml.cli import main
+    assert main(["check"]) == 1
+
+
+def test_folders_that_cannot_be_written_or_sit_in_the_home(machine, tmp_path, monkeypatch):
+    blocked = tmp_path / "file-not-folder"
+    blocked.write_text("x")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    machine.write_text(f'root = "{tmp_path / "big"}"\n[store]\nroot = "{blocked / "store"}"\n'
+                       f'[data]\nroot = "{home / "data"}"\n')
+    found = _setup.checks()
+    store = _by_message(found, "cache store")[0]
+    assert store["level"] == "fail" and store["fix"].startswith("useml settings set store.root")
+    data = _by_message(found, "is in the home folder")[0]
+    assert data["level"] == "warn" and data["fix"] == "useml settings unset data.root"
+    assert _by_message(found, "datasets")[0]["level"] == "ok"      # under the root: fine
+    assert [e["area"] for e in found] == sorted((e["area"] for e in found),
+                                                key=_setup.AREAS.index)
+
+
+def test_check_json_and_the_short_form(machine, tmp_path, capsys):
+    from useml.cli import main
+
+    machine.write_text(f'root = "{tmp_path / "root"}"\n')
+    assert main(["check", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert {"level", "area", "message", "fix"} == set(data[0])
+    assert all(level in "✓⚠✗" for level, _ in _setup.check())
+
+
+def test_guided_editor_validates_then_writes_after_a_yes(machine):
+    from useml import _settings, paths
+
+    machine.write_text("# mine\n[hub]\nparallel = true\n")
+    replies = iter(["perhaps",           # hub.parallel: refused, asked again
+                    "-",                 # removed
+                    "y"])                # write
+    said = []
+    changed = _settings.guided("hub", ask=lambda _: next(replies), say=said.append)
+    assert changed == ["hub.parallel"]
+    assert any("true or false" in line for line in said)
+    assert "parallel" not in paths.config().get("hub", {})
+    assert machine.read_text().startswith("# mine")
+
+
+def test_guided_editor_writes_nothing_when_stopped(machine, tmp_path):
+    from useml import _settings
+
+    machine.write_text("[store]\nmax_size = \"10GB\"\n")
+    replies = iter(["/elsewhere", "q"])
+    assert _settings.guided("store", ask=lambda _: next(replies), say=lambda _: None) == []
+    assert machine.read_text() == "[store]\nmax_size = \"10GB\"\n"
+    replies = iter(["", "500GB", "n"])
+    assert _settings.guided("store", ask=lambda _: next(replies), say=lambda _: None) == []
+    assert "10GB" in machine.read_text()
+    with pytest.raises(_settings.SettingsError, match="unknown section"):
+        _settings.guided("nope")
+
+
+def test_guided_editor_stops_on_end_of_input(machine):
+    from useml import _settings
+
+    def ask(_):
+        raise EOFError
+    assert _settings.guided("hub", ask=ask, say=lambda _: None) == []

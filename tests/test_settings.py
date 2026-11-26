@@ -106,3 +106,9 @@ def test_cli(config_file, capsys):
     assert main(["settings", "set", "monitor.log_lines", "x"]) == 2
     out = capsys.readouterr().out
     assert "monitor.log_lines = 40" in out and "40" in out and "monitor.share" in out
+
+
+def test_a_label_with_an_apostrophe(config_file):
+    # What the dashboard composes for a name like this: useml settings set monitor.label 'Bob'\''s laptop'
+    settings.edit("monitor.label", settings.parse_value("monitor.label", "Bob's laptop"))
+    assert paths.config()["monitor"]["label"] == "Bob's laptop"

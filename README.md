@@ -24,6 +24,7 @@ package (`useml docs <topic>`):
   · [Datasets](src/useml/docs/datasets.md) · [Processed data](src/useml/docs/data.md) · [Configs](src/useml/docs/config.md)
   · [Experiences](src/useml/docs/exp.md)
 - [Monitor: a private dashboard reachable from anywhere](src/useml/docs/monitor.md)
+- [Projects: methods, datasets, every run kept](src/useml/docs/projects.md)
 - [Troubleshooting](src/useml/docs/troubleshooting.md) · [Reference](src/useml/docs/reference.md)
   · [FAQ](src/useml/docs/faq.md)
 - [Instructions for AI coding assistants](src/useml/docs/SKILL.md)
@@ -218,10 +219,32 @@ useml monitor start           # one agent per machine: outgoing connections only
 ```
 
 Machines open no port: each agent keeps an outgoing HTTPS connection to the Space, which
-can only ask it for a fresh snapshot (about a second after a click). `[monitor] share`
+can only ask it for a fresh snapshot; the page refreshes itself every 10 s and shows
+first what is running or failed, with progress and curves. `[monitor] share`
 chooses what is sent; paths, hostname and user name are masked; code never leaves. The
 setup view shows useml's state on each machine and writes the `useml settings set …`
 command to run there to change a setting.
+
+### Projects: what was tried, and what it gave
+
+```toml
+# useml.toml
+[project]
+name = "robust-vision"
+focus = "wide"
+[project.methods.wide]
+description = "Wider blocks, same budget."
+```
+
+```python
+with exp.experience("wide/w4", method="wide") as e: ...
+```
+
+Every finished run is recorded with its factors (arguments, configs and overrides,
+datasets) and its results, never its code. `useml project export` writes them as
+Markdown; the dashboard keeps them in a private dataset and shows, per method, the code
+versions, an ablation map, correlations between factors and results, and curves side by
+side. See [projects](src/useml/docs/projects.md).
 
 ### Runs that survive, crashes that explain themselves
 

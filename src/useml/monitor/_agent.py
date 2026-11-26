@@ -6,7 +6,7 @@
 
     loop:
         GET  <dashboard>/agent/wait?machine=<alias>    held up to 25 s by the dashboard
-             → "refresh": push a FULL snapshot now
+             → "refresh": push a snapshot now (full, or light when asked)
              → "none":    push a LIGHT one if something changed (at most every
                           `min_interval` s) or if `heartbeat` s passed since the last push
         POST <dashboard>/agent/push
@@ -30,7 +30,7 @@ import urllib.request
 from pathlib import Path
 
 from ._share import settings as load_settings
-from ._snapshot import experience_roots, snapshot
+from ._snapshot import experience_roots, pending_records, snapshot
 
 MIN_INTERVAL = 10.0
 
@@ -86,6 +86,9 @@ class Agent:
         self.last_push = 0.0
         self.last_change = None
         self.running = True
+        self.sent = self._load_sent()          # ids of run records the dashboard has kept
+        self.history_retry = 0.0               # when to offer records again to a dashboard
+                                               # that keeps no history
 
     # ── http ─────────────────────────────────────────────────────────────────
 
@@ -102,10 +105,46 @@ class Agent:
             return json.loads(response.read() or b"{}")
 
     def push(self, *, full: bool) -> None:
-        body = json.dumps({"machine": self.alias, "full": full,
-                           "snapshot": snapshot(full=full, config=self.config)}).encode()
-        self._request("POST", "/agent/push", body, timeout=60)
+        payload = {"machine": self.alias, "full": full,
+                   "snapshot": snapshot(full=full, config=self.config)}
+        records = []
+        if time.time() >= self.history_retry:
+            try:
+                records = pending_records(self.config, self.sent)
+            except Exception as error:                       # noqa: BLE001 - never block a push
+                _log(f"cannot describe a finished run: {error}")
+        if records:
+            payload["records"] = records
+        answer = self._request("POST", "/agent/push", json.dumps(payload, default=str).encode(),
+                               timeout=120 if records else 60)
         self.last_push = time.time()
+        if records:
+            stored = set(answer.get("stored") or [])
+            if stored:
+                self.sent |= stored
+                self._save_sent()
+            if not answer.get("history"):
+                self.history_retry = time.time() + 3600      # ask again in an hour
+
+    # ── the run records already kept ─────────────────────────────────────────
+
+    @staticmethod
+    def _sent_file() -> Path:
+        from .. import paths
+
+        return paths.directory("monitor") / "recorded.json"
+
+    def _load_sent(self) -> set:
+        try:
+            return set(json.loads(self._sent_file().read_text()).get("ids", []))
+        except (OSError, ValueError, AttributeError):
+            return set()
+
+    def _save_sent(self) -> None:
+        path = self._sent_file()
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"ids": sorted(self.sent)}))
+        os.replace(temporary, path)
 
     # ── change detection ─────────────────────────────────────────────────────
 
@@ -126,7 +165,7 @@ class Agent:
         """One round: wait for the dashboard, then push if needed. Returns what it did."""
         answer = self._request("GET", f"/agent/wait?machine={urllib.request.quote(self.alias)}")
         if answer.get("command") == "refresh":
-            self.push(full=True)
+            self.push(full=answer.get("full", True) is not False)
             return "refresh"
         signature = self._signature()
         changed = signature != self.last_change

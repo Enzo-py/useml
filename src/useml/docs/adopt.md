@@ -68,17 +68,40 @@ markers in `.gitignore`.
 useml check
 ```
 
-`useml check` prints one line per item, `✓` (fine), `⚠` (works, could be better) or `✗`
-(broken):
+`useml check` prints one line per item, grouped by area, `✓` (fine), `⚠` (works, could
+be better) or `✗` (broken). Under each `⚠` or `✗`, the command that fixes it:
 
-- machine config, cache root (writable, free space), download policy;
-- caches still in the home folder (`--measure` gives their size);
-- the cache store;
-- every config file reads and every `type:` resolves;
-- experiences, including those that died without a word;
-- tmux, and whether the machine kills processes at logout.
+```text
+folders
+  ⚠ datasets ~/datasets is in the home folder, the root is /data/me/useml
+      → useml settings unset datasets.root
+```
 
-It exits with code 1 if any line is `✗`.
+- **config**: every key of the machine config is known and well typed (a typo such as
+  `monitor.sahre` is a `✗`, with the closest key);
+- **folders**: the root, the cache store, processed data, datasets and experiences — each
+  accepts files, has free space (`⚠` below 20 GB), and is not in the home folder while
+  the root is on another disk;
+- **caches** still in the home folder (`--measure` gives their size);
+- **downloads** policy, the cache **store** and its budget, unused **processed** tables;
+- every **config** file reads and every `type:` resolves;
+- **datasets** whose driver changed;
+- **experiences**, including those that died without a word;
+- **system**: tmux, and whether the machine kills processes at logout.
+
+It changes nothing. It exits with code 1 if any line is `✗`; `--json` prints the list.
+
+## Editing the machine config
+
+```bash
+useml settings edit             # every setting, one by one (`useml settings edit store`: one section)
+```
+
+For each setting: its meaning and its value (or where useml writes now). Enter keeps it,
+`-` removes it, `q` stops. Each answer is checked; the changes are shown, written after a
+yes (comments kept, previous file in `config.toml.bak`), then the machine is checked.
+For one key: `useml settings set <key> <value>`. The dashboard shows the same checks for
+each machine, with the same commands ([monitor.md](monitor.md)).
 
 ## Moving caches out of the home folder
 

@@ -367,60 +367,173 @@ def init(project=None, *, root=None, store=None, yes: bool = False, machine: boo
 
 # ── check ─────────────────────────────────────────────────────────────────────
 
-def check(*, measure: bool = False) -> list[tuple[str, str]]:
-    """[(level, message)], level in ✓ ⚠ ✗."""
+LEVELS = {"ok": "✓", "warn": "⚠", "fail": "✗"}
+#: The order in which areas are printed.
+AREAS = ("config", "folders", "caches", "downloads", "store", "processed", "configs",
+         "datasets", "experiences", "system")
+LOW_FREE_BYTES = 20 << 30          # below 20 GB free, a cache folder is about to fill up
+
+
+def _writable(folder: Path) -> str | None:
+    """None when `folder` (created if missing) accepts a file, else the reason."""
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        probe = folder / f".useml-write-test-{os.getpid()}"
+        probe.write_text("x")
+        probe.unlink()
+        return None
+    except OSError as error:
+        return str(error)
+
+
+def _config_checks(add) -> None:
+    """Every key of the machine config is known and has the right type."""
+    from . import _settings, paths
+
+    path = paths.config_path()
+    try:
+        config = paths.config()
+    except ValueError as error:
+        add("fail", "config", str(error), f"open {path} and fix the line it names")
+        return
+    if not config:
+        add("ok", "config", f"no machine config ({path}): defaults apply",
+            "useml settings edit")
+        return
+    problems = 0
+
+    def walk(table: dict, prefix: str) -> None:
+        nonlocal problems
+        for key, value in table.items():
+            full = f"{prefix}{key}"
+            if isinstance(value, dict) and full in ("env", "hub", "store", "data", "datasets",
+                                                    "exp", "monitor"):
+                walk(value, f"{full}.")
+                continue
+            try:
+                _settings.parse_value(full, _settings.format_value(value))
+            except ValueError as error:
+                problems += 1
+                add("fail", "config", f"{path.name}: {error}", f"useml settings unset {full}")
+
+    walk(config, "")
+    if not problems:
+        add("ok", "config", f"machine config {path}: every key known and well typed")
+
+
+def _folder_checks(add) -> None:
+    """Every folder useml writes to: where it is, that it accepts files, its free space,
+    and that it is not left in the home folder while a cache root is set elsewhere."""
+    from . import paths
+    from .store import human
+
+    root = paths.root()
+    folders = [("root", "root", root)] if root else []
+    try:
+        from . import store as stores
+
+        folders.append(("cache store", "store.root", stores.default_root()))
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        from .data._catalog import data_root
+
+        folders.append(("processed data", "data.root", data_root()))
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        from . import datasets
+
+        folders.append(("datasets", "datasets.root", datasets.root()))
+    except Exception:                                        # noqa: BLE001
+        pass
+    try:
+        from . import exp
+
+        folders.append(("experiences", "exp.root", exp.root()))
+    except Exception:                                        # noqa: BLE001
+        pass
+    if not root:
+        add("warn", "folders", "no cache root: library caches stay in their default places "
+            "(often the home folder)", "useml settings set root /path/on/a/big/disk")
+    configured = paths.config()
+    for label, key, folder in folders:
+        folder = Path(folder)
+        reason = _writable(folder)
+        if reason:
+            add("fail", "folders", f"{label} {folder}: cannot write ({reason})",
+                f"useml settings set {key} /a/writable/folder")
+            continue
+        free = shutil.disk_usage(folder).free
+        table, _, name = key.partition(".")
+        explicitly_set = bool((configured.get(table) or {}).get(name)) if name else True
+        if root and key != "root" and paths.is_under_home_or_temporary(folder) \
+                and not paths.is_under_home_or_temporary(root):
+            add("warn", "folders", f"{label} {folder} is in the home folder, the root is "
+                f"{root}", f"useml settings unset {key}" if explicitly_set else None)
+        elif free < LOW_FREE_BYTES:
+            add("warn", "folders", f"{label} {folder}: only {human(free)} free",
+                "useml store gc --apply" if key == "store.root" else None)
+        else:
+            add("ok", "folders", f"{label} {folder}: writable, {human(free)} free")
+
+
+def checks(*, measure: bool = False) -> list[dict]:
+    """Everything that should be in place, as [{"level", "area", "message", "fix"}].
+
+    level: "ok", "warn" or "fail". fix: the command that repairs it, or None. Nothing is
+    changed here: the fixes are only proposed."""
     from . import hub, paths
     from .store import human
 
-    checks = []
+    out = []
 
-    def add(ok, message):
-        checks.append(("✓" if ok is True else "⚠" if ok is None else "✗", message))
+    def add(level, area, message, fix=None):
+        out.append({"level": level, "area": area, "message": message, "fix": fix})
 
-    try:
-        config = paths.config()
-        add(True, f"machine config: {paths.config_path()}" if config else
-            f"no machine config ({paths.config_path()}): defaults apply")
-    except ValueError as error:
-        add(False, str(error))
-    root = paths.root()
-    if root:
-        try:
-            root.mkdir(parents=True, exist_ok=True)
-            probe = root / ".useml-write-test"
-            probe.write_text("x")
-            probe.unlink()
-            free = shutil.disk_usage(root).free
-            add(True if free > 50 << 30 else None, f"cache root {root}: writable, "
-                f"{human(free)} free")
-        except OSError as error:
-            add(False, f"cache root {root}: {error}")
-    else:
-        add(None, "no cache root: library caches stay in their default places")
-    status = hub.status()
-    add(True if not status["parallel_allowed"] else None,
-        "downloads: sequential" if not status["parallel_allowed"]
-        else "downloads: parallel allowed")
+    _config_checks(add)
+    _folder_checks(add)
     stray = hub.scan(measure=measure)
     if stray:
         size = sum(entry["bytes"] or 0 for entry in stray)
-        add(None, f"{len(stray)} caches left in the home"
-            + (f" ({human(size)})" if measure else "")
-            + ": `useml hub scan` to see them, `--move --apply` to move them under the root")
+        add("warn", "caches", f"{len(stray)} caches left in the home"
+            + (f" ({human(size)})" if measure else "") + ": "
+            + ", ".join(entry["path"] for entry in stray[:5]),
+            "useml hub scan --move --apply" if paths.root() else None)
+    else:
+        add("ok", "caches", "no cache left in the home folder")
+    status = hub.status()
+    add("ok" if not status["parallel_allowed"] else "warn", "downloads",
+        "downloads: sequential" if not status["parallel_allowed"]
+        else "downloads: parallel allowed", None if not status["parallel_allowed"]
+        else "useml settings unset hub.parallel")
     try:
         from . import store as stores
 
         opened = stores.open()
-        add(True, f"cache store {opened.root}: {len(opened.declared())} spaces, "
-            f"{human(opened.total_bytes())}")
+        total, budget = opened.total_bytes(), stores.budget()
+        if budget and total > budget:
+            add("warn", "store", f"cache store: {human(total)}, over its budget of "
+                f"{human(budget)}", "useml store gc --apply")
+        else:
+            add("ok", "store", f"cache store {opened.root}: {len(opened.declared())} spaces, "
+                f"{human(total)}" + (f" of {human(budget)}" if budget else ""))
     except Exception as error:                               # noqa: BLE001
-        add(False, f"cache store: {error}")
+        add("fail", "store", f"cache store: {error}", "useml store check")
+    try:
+        from . import data
+
+        unused = [t for t in data.tables() if not t["names"]]
+        if unused:
+            add("warn", "processed", f"{len(unused)} processed tables no name points to "
+                f"({human(sum(t['bytes'] for t in unused))})", "useml data tables")
+    except Exception as error:                               # noqa: BLE001
+        add("warn", "processed", f"processed data: {error}")
     try:
         from . import config as configs
 
         library = configs.library()
         names = library.ls()
-        add(True, f"configs {library.root}: " + ", ".join(f"{len(v)} {k}" for k, v in names.items()))
         broken, unresolved = [], set()
         for kind, files in names.items():
             for name in files:
@@ -437,46 +550,62 @@ def check(*, measure: bool = False) -> list[tuple[str, str]]:
                     except Exception:                        # noqa: BLE001
                         unresolved.add(type_name)
         for line in broken[:10]:
-            add(False, line)
+            add("fail", "configs", line, "useml config show " + line.split(":")[0].split("/")[-1])
         if unresolved:
-            add(False, f"types not found in {list(library.namespace.packages)}: "
-                       f"{sorted(unresolved)[:10]} — add their package to `packages`")
+            add("fail", "configs", f"types not found in {list(library.namespace.packages)}: "
+                f"{sorted(unresolved)[:10]} — add their package to `packages`")
         elif not broken:
-            add(True, "every config reads and every `type:` resolves")
+            add("ok", "configs", f"configs {library.root}: "
+                + ", ".join(f"{len(v)} {k}" for k, v in names.items())
+                + "; every config reads and every `type:` resolves")
     except Exception as error:                               # noqa: BLE001
-        add(None, f"configs: {error}")
+        if "no config library" not in str(error):           # most projects have none
+            add("warn", "configs", f"configs: {error}")
     try:
         from . import datasets
 
-        entries = datasets.ls()
+        entries = datasets.ls(measure=False)
         if entries:
             ready = [e["name"] for e in entries if e["current"]]
             outdated = [e["name"] for e in entries if e["prepared"] and not e["current"]]
-            add(True, f"datasets {datasets.root()}: {len(entries)} drivers, {len(ready)} ready"
-                + (f", {len(entries) - len(ready) - len(outdated)} never prepared"
-                   if len(entries) - len(ready) - len(outdated) else ""))
-            if outdated:
-                add(None, f"datasets whose driver changed (rebuilt at next load): {outdated}")
+            never = [e["name"] for e in entries if not e["prepared"]]
+            add("ok", "datasets", f"datasets {datasets.root()}: {len(entries)} drivers, "
+                f"{len(ready)} ready" + (f", {len(never)} never prepared" if never else ""))
+            for name in outdated:
+                add("warn", "datasets", f"dataset {name}: its driver changed (rebuilt at next "
+                    "load)", f"useml datasets prepare {name}")
     except Exception as error:                               # noqa: BLE001
-        add(False, f"datasets: {error}")
+        add("fail", "datasets", f"datasets: {error}")
     try:
         from . import exp
 
         experiences = exp.ls()
-        died = [e.name for e in experiences if e.status == "died"]
         running = [e.name for e in experiences if e.status == "running"]
-        add(True, f"experiences {exp.root()}: {len(experiences)}"
+        add("ok", "experiences", f"experiences {exp.root()}: {len(experiences)}"
             + (f", {len(running)} running" if running else ""))
-        if died:
-            add(False, f"experiences that died silently: {died} — `useml exp why <name>`")
+        for experience in experiences:
+            if experience.status == "died":
+                add("fail", "experiences", f"{experience.name} died without a word",
+                    f"useml exp why {experience.name}")
+    except Exception as error:                               # noqa: BLE001
+        add("warn", "experiences", f"experiences: {error}")
+    try:
         from .exp._launch import logout_kills_processes, tmux_available
 
-        add(True if tmux_available() else None,
+        add("ok" if tmux_available() else "warn", "system",
             "tmux available: runs get a terminal to reattach to" if tmux_available()
-            else "no tmux: runs still survive disconnection, without a terminal to reattach")
+            else "no tmux: runs still survive disconnection, without a terminal to reattach",
+            None if tmux_available() else
+            "brew install tmux" if sys.platform == "darwin" else "sudo apt install tmux")
         warning = logout_kills_processes()
         if warning:
-            add(False, warning)
-    except Exception as error:                               # noqa: BLE001
-        add(None, f"experiences: {error}")
-    return checks
+            add("fail", "system", warning, "loginctl enable-linger $USER")
+    except Exception:                                        # noqa: BLE001
+        pass
+    order = {area: index for index, area in enumerate(AREAS)}
+    return sorted(out, key=lambda c: order.get(c["area"], len(order)))
+
+
+def check(*, measure: bool = False) -> list[tuple[str, str]]:
+    """[(level, message)], level in ✓ ⚠ ✗ — the short form of `checks`."""
+    return [(LEVELS[c["level"]], c["message"]) for c in checks(measure=measure)]

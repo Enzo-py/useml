@@ -16,7 +16,12 @@ useml docs exp          # print one guide: quickstart, adopt, paths-and-hub, sto
 
 ## First steps in a project
 
-1. `useml check` — see what is set up and what is broken. Change machine settings with
+0. A project's methods, datasets and focus live in `[project]` of useml.toml
+   (`useml docs projects`); declare experiences with `method=` so their runs are grouped,
+   and keep step arguments plain (named values, configs with overrides): they become the
+   factors of the ablation map.
+1. `useml check` — see what is set up and what is broken; each problem comes with the
+   command that fixes it (show it to the user before running it). Change machine settings with
    `useml settings set <key> <value>` (keeps comments, refuses typos), not by rewriting the
    TOML file. If useml is not set up, propose
    `useml init` (it prints a plan and writes nothing until confirmed; it only adds, never

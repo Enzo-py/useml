@@ -327,10 +327,63 @@ def _settings(args) -> int:
             path = settings.edit(args.key, remove=True)
             print(f"{args.key} removed ({path})")
             return 0
+        if command == "edit":
+            if not sys.stdin.isatty():
+                print("useml settings edit asks questions: run it in a terminal "
+                      "(or use `useml settings set`)", file=sys.stderr)
+                return 2
+            changed = settings.guided(args.section)
+            if changed:
+                from ._setup import LEVELS, checks
+
+                print("\nChecking the machine…")
+                for entry in checks():
+                    if entry["level"] != "ok":
+                        print(f"  {LEVELS[entry['level']]} {entry['message']}")
+                        if entry["fix"]:
+                            print(f"      → {entry['fix']}")
+                print("  done: `useml check` shows everything")
+            return 0
     except settings.SettingsError as error:
         print(f"useml settings: {error}", file=sys.stderr)
         return 2
     return 1
+
+
+def _project(args) -> int:
+    from . import projects
+
+    project = projects.declared()
+    if project is None:
+        print("no [project] here: add one to useml.toml (`useml docs projects`)", file=sys.stderr)
+        return 2
+    records = projects.runs()
+    if args.project_command == "export":
+        if args.format == "json":
+            print(json.dumps({"project": projects.summary(project, records), "runs": records},
+                             indent=1, default=lambda v: sorted(v) if isinstance(v, set) else str(v)))
+        else:
+            print(projects.to_markdown(project, records), end="")
+        return 0
+    if args.project_command == "runs":
+        for entry in records:
+            numbers = ", ".join(f"{k}={v:.4g}" for k, v in list(entry["results"].items())[:4])
+            print(f"{entry['method'] or '(unassigned)':<16} {entry['experience']:<28} "
+                  f"{entry['status']:<8} v{entry['version']}  {numbers}")
+        return 0
+    data = projects.summary(project, records)
+    print(f"{data['name']} — {data['description']}" if data["description"] else data["name"])
+    if data["focus"]:
+        print(f"working on: {data['focus']}")
+    print("\nmethods")
+    for name, info in data["methods"].items():
+        mark = "▶" if name == data["focus"] else " "
+        print(f" {mark} {name:<18} {info['runs']:>3} runs  {info['versions']} versions  "
+              f"{info.get('status') or ''}  {info.get('description') or ''}")
+    print("\ndatasets")
+    for name, info in sorted(data["datasets"].items()):
+        print(f"   {name:<20} {info['runs']:>3} runs  {', '.join(info['methods'])}")
+    return 0
 
 
 def _monitor(args) -> int:
@@ -344,11 +397,16 @@ def _monitor(args) -> int:
         monitor.serve(port=args.port)
         return 0
     if command == "deploy":
-        result = monitor.deploy(args.space)
+        result = monitor.deploy(args.space, history=not args.no_history)
         print(f"private Space ready: {result['page']}")
         print(f"dashboard: {result['url']}  (it builds for a minute or two the first time)")
         if result["recorded"]:
             print("recorded in the machine config: [monitor] space")
+        if result.get("history"):
+            print(f"private dataset for the history of projects: {result['history']}")
+            print("to keep it, once (useml never handles this token):")
+            for number, line in enumerate(result["history_steps"], 1):
+                print(f"  {number}. {line}")
         print("next: useml monitor start   (on each machine that should report)")
         return 0
     if command == "start":
@@ -473,6 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
     check_parser = commands.add_parser("check", help="check that everything is in place")
     check_parser.add_argument("--measure", action="store_true",
                                help="also measure the caches left in the home (slow)")
+    check_parser.add_argument("--json", action="store_true", help="the checks as JSON")
 
     hub_parser = commands.add_parser("hub", help="downloads")
     hub_commands = hub_parser.add_subparsers(dest="hub_command", required=True)
@@ -555,6 +614,16 @@ def build_parser() -> argparse.ArgumentParser:
     set_setting.add_argument("value")
     unset_setting = settings_commands.add_parser("unset")
     unset_setting.add_argument("key")
+    edit_settings = settings_commands.add_parser("edit", help="walk the settings, then check")
+    edit_settings.add_argument("section", nargs="?",
+                               help="root, store, data, datasets, exp, hub, env or monitor")
+
+    project_parser = commands.add_parser("project", help="this project: methods, datasets, runs")
+    project_commands = project_parser.add_subparsers(dest="project_command", required=True)
+    project_commands.add_parser("show", help="the declaration and what was run here")
+    project_commands.add_parser("runs", help="every ended run: method, factors, results")
+    export_parser = project_commands.add_parser("export", help="datasets, methods, runs")
+    export_parser.add_argument("--format", choices=["md", "json"], default="md")
 
     monitor_parser = commands.add_parser("monitor", help="the private dashboard and its agent")
     monitor_commands = monitor_parser.add_subparsers(dest="monitor_command", required=True)
@@ -564,6 +633,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--port", type=int, default=8765)
     deploy_parser = monitor_commands.add_parser("deploy")
     deploy_parser.add_argument("--space", help="owner/name (default: <you>/useml-monitor)")
+    deploy_parser.add_argument("--no-history", action="store_true",
+                               help="no private dataset for the records of finished runs")
     for name in ("start", "stop", "status"):
         monitor_commands.add_parser(name)
 
@@ -616,18 +687,32 @@ def main(argv=None) -> int:
     if args.command == "docs":
         return _docs(args)
     if args.command == "check":
-        from ._setup import check
+        from ._setup import LEVELS, checks
 
-        checks = check(measure=args.measure)
-        for level, message in checks:
-            print(f"{level} {message}")
-        return 1 if any(level == "✗" for level, _ in checks) else 0
+        found = checks(measure=args.measure)
+        if args.json:
+            print(json.dumps(found, indent=1))
+        else:
+            area = None
+            for entry in found:
+                if entry["area"] != area:
+                    area = entry["area"]
+                    print(f"\n{area}")
+                print(f"  {LEVELS[entry['level']]} {entry['message']}")
+                if entry["fix"] and entry["level"] != "ok":
+                    print(f"      → {entry['fix']}")
+            warn = sum(e["level"] == "warn" for e in found)
+            fail = sum(e["level"] == "fail" for e in found)
+            print(f"\n{fail} to fix, {warn} to look at" if fail or warn else "\neverything is in place")
+        return 1 if any(entry["level"] == "fail" for entry in found) else 0
     if args.command == "exp":
         return _exp(args)
     if args.command == "datasets":
         return _datasets(args)
     if args.command == "monitor":
         return _monitor(args)
+    if args.command == "project":
+        return _project(args)
     if args.command == "settings":
         return _settings(args)
     if args.command == "config":

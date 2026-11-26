@@ -40,6 +40,10 @@ def serve(*, port: int = 8765, open_agent: bool = True) -> None:
     token = secrets.token_urlsafe(24)
     os.environ["USEML_MONITOR_TOKEN"] = token
     os.environ.pop("SPACE_ID", None)
+    from .. import paths
+
+    # Run records of projects are kept in a folder of this machine.
+    os.environ.setdefault("USEML_HISTORY_DIR", str(paths.directory("monitor", "history")))
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("useml_monitor_app", space_folder() / "app.py")
@@ -64,9 +68,14 @@ def serve(*, port: int = 8765, open_agent: bool = True) -> None:
         server.should_exit = True
 
 
-def deploy(space: str | None = None) -> dict:
+def deploy(space: str | None = None, *, history: bool = True) -> dict:
     """Create (or update) the PRIVATE Space holding the dashboard, then record it in the
-    machine config. Refuses to upload into a Space that is not private."""
+    machine config. Refuses to upload into a Space that is not private.
+
+    With `history` (default), also create the PRIVATE dataset `<space>-history` where the
+    dashboard keeps the records of finished runs, and tell the Space its name. The Space
+    still needs a token to write there: the owner creates it and adds it as a secret
+    (`history_steps` says how); useml never handles that token."""
     try:
         from huggingface_hub import HfApi
     except ImportError as error:
@@ -87,8 +96,30 @@ def deploy(space: str | None = None) -> dict:
                       allow_patterns=list(SPACE_FILES),
                       commit_message="useml monitor dashboard")
     recorded = _record_space(repo_id)
-    return {"space": repo_id, "page": f"https://huggingface.co/spaces/{repo_id}",
-            "url": space_url(repo_id), "recorded": recorded}
+    out = {"space": repo_id, "page": f"https://huggingface.co/spaces/{repo_id}",
+           "url": space_url(repo_id), "recorded": recorded, "history": None}
+    if history:
+        dataset = f"{repo_id}-history"
+        api.create_repo(dataset, repo_type="dataset", private=True, exist_ok=True)
+        if not getattr(api.dataset_info(dataset), "private", False):
+            raise RuntimeError(f"{dataset} exists and is PUBLIC: refusing to keep run "
+                               f"records there. Make it private, or deploy with "
+                               f"--no-history.")
+        api.add_space_variable(repo_id, "USEML_HISTORY_REPO", dataset)
+        out["history"] = dataset
+        out["history_steps"] = history_steps(repo_id, dataset)
+    return out
+
+
+def history_steps(space: str, dataset: str) -> list[str]:
+    """What the owner does, once, so the Space can write run records to its dataset."""
+    return [
+        "Create a token at https://huggingface.co/settings/tokens : type Fine-grained, "
+        f"repository permission 'Write access to contents' on {dataset} only, nothing else.",
+        f"Add it as a SECRET of the Space at https://huggingface.co/spaces/{space}/settings "
+        "(Variables and secrets → New secret), named USEML_HISTORY_TOKEN.",
+        "The Space restarts by itself; its dashboard then says 'history kept'.",
+    ]
 
 
 def _record_space(repo_id: str) -> bool:
