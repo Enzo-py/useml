@@ -162,6 +162,15 @@ class Context:
             write_state(self.experience_dir, step_progress=[int(done), int(total), label])
             self._last = time.monotonic()
 
+    def metric(self, step: int, **values) -> None:
+        """Record metric values at `step` (`ctx.metric(120, loss=0.31, acc=0.8)`): kept in
+        `metrics.jsonl` of the step, drawn as curves by the monitor."""
+        numbers = {k: float(v) for k, v in values.items() if isinstance(v, (int, float))}
+        if not numbers:
+            return
+        with open(self.dir / "metrics.jsonl", "a") as file:
+            file.write(json.dumps({"step": int(step), "time": time.time(), **numbers}) + "\n")
+
     @property
     def checkpoints(self) -> Checkpointer:
         return Checkpointer(self.dir / "checkpoints")

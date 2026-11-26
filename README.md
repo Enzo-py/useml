@@ -23,6 +23,7 @@ package (`useml docs <topic>`):
 - [Caches and downloads](src/useml/docs/paths-and-hub.md) · [Cache store](src/useml/docs/store.md)
   · [Datasets](src/useml/docs/datasets.md) · [Processed data](src/useml/docs/data.md) · [Configs](src/useml/docs/config.md)
   · [Experiences](src/useml/docs/exp.md)
+- [Monitor: a private dashboard reachable from anywhere](src/useml/docs/monitor.md)
 - [Troubleshooting](src/useml/docs/troubleshooting.md) · [Reference](src/useml/docs/reference.md)
   · [FAQ](src/useml/docs/faq.md)
 - [Instructions for AI coding assistants](src/useml/docs/SKILL.md)
@@ -207,6 +208,20 @@ useml exp show vision/baseline
 useml exp follow vision/baseline
 useml exp stop vision/baseline
 ```
+
+## A private dashboard, reachable from anywhere
+
+```bash
+useml monitor snapshot        # exactly what would leave this machine
+useml monitor deploy          # a PRIVATE Hugging Face Space (once)
+useml monitor start           # one agent per machine: outgoing connections only
+```
+
+Machines open no port: each agent keeps an outgoing HTTPS connection to the Space, which
+can only ask it for a fresh snapshot (about a second after a click). `[monitor] share`
+chooses what is sent; paths, hostname and user name are masked; code never leaves. The
+setup view shows useml's state on each machine and writes the `useml settings set …`
+command to run there to change a setting.
 
 ### Runs that survive, crashes that explain themselves
 

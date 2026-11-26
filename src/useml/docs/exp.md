@@ -127,6 +127,7 @@ def train(dataset, model, epochs: int, *, ctx):
 
 - `ctx.dir`: the step's folder, kept after an interruption;
 - `ctx.log(message)`;
+- `ctx.metric(step, **values)`: values drawn as curves by the monitor;
 - `ctx.checkpoints`: `save`, `latest`, `latest_step`, `best(metric, mode="min")`; keeps
   the last 3 and the best of each metric; writes atomically.
 

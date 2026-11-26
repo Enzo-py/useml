@@ -11,12 +11,14 @@ code, instead of guessing the API:
 ```bash
 useml docs              # list the guides and their folder
 useml docs exp          # print one guide: quickstart, adopt, paths-and-hub, store, data, datasets,
-                        # config, exp, troubleshooting, reference, faq
+                        # config, exp, monitor, troubleshooting, reference, faq
 ```
 
 ## First steps in a project
 
-1. `useml check` — see what is set up and what is broken. If useml is not set up, propose
+1. `useml check` — see what is set up and what is broken. Change machine settings with
+   `useml settings set <key> <value>` (keeps comments, refuses typos), not by rewriting the
+   TOML file. If useml is not set up, propose
    `useml init` (it prints a plan and writes nothing until confirmed; it only adds, never
    overwrites). Do not run `useml init --yes` without the user's agreement.
 2. `import useml` must come before torch / transformers / open_clip in entry points.
@@ -43,6 +45,9 @@ useml docs exp          # print one guide: quickstart, adopt, paths-and-hub, sto
   cost="cheap" | "expensive" | "precious")`.
 - **Downloads go through `useml.hub.get(...)`** and are sequential by default. Do not add
   thread pools for downloads; do not call `hub.allow_parallel()` unless the user asks.
+- **The monitor sends data to a Hugging Face Space** (`useml docs monitor`). Before `useml monitor deploy` or
+  `start`, show the user `useml monitor snapshot` and their `[monitor] share`; never widen
+  `share` or remove `redact` entries on your own.
 - **Never delete** caches, tables, experiences or store entries without the user's
   explicit agreement. Cleaning commands are dry runs until `--apply`.
 

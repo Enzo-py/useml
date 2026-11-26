@@ -24,12 +24,30 @@ max_size = "300GB"                 # refuse to write a table beyond this
 [datasets]
 root = "/data/me/datasets"         # default: <root>/datasets
 
+[monitor]
+space = "<you>/useml-monitor"      # see monitor.md for every key
+machine = "gpu-a"
+share = ["status", "steps", "progress", "errors", "metrics"]
+
 [exp]
 root = "/data/me/experiments"      # used when the project does not set one
 notify = "my-command"              # run when an experience ends or crashes
 ```
 
 Sizes accept `B`, `KB`, `MB`, `GB`, `TB` (binary units): `"450GB"`, `"1.5 TB"`.
+
+Edit it with `useml settings` rather than by hand: comments and order are kept, the
+previous file is saved as `config.toml.bak`, unknown keys and wrong types are refused.
+
+```bash
+useml settings show                            # every known key, its value and meaning
+useml settings get monitor.share
+useml settings set monitor.share '["status", "steps", "errors"]'
+useml settings set env.HF_HOME /data/shared/hf
+useml settings unset store.max_size
+```
+
+Values are TOML (`50`, `true`, `"text"`, `["a", "b"]`); a bare word is a string.
 
 ## Project settings
 
@@ -76,6 +94,7 @@ folder wins.
 | `useml init [--root DIR] [--store DIR] [--yes] [--no-machine] [--no-project]` | set up the machine and the project; adds, never overwrites |
 | `useml check [--measure]` | check that everything is in place |
 | `useml docs [topic] [--path]` | read this documentation |
+| `useml settings show` / `get <key>` / `set <key> <value>` / `unset <key>` | read and edit the machine config, keeping comments |
 | `useml paths` | every cache variable, before and after |
 | `useml hub ls [--refresh] [--json]` | recorded downloads |
 | `useml hub get <uri> [--dest DIR] [--extract] [--refresh]` | download, print the path |
@@ -89,6 +108,7 @@ folder wins.
 | `useml store unpin <owner>` | release pins |
 | `useml data ls` / `tables` / `info <name>` / `jobs` / `follow <job>` / `rm <name> [--table]` | processed datasets |
 | `useml datasets ls` / `info <name> [--split S]` / `prepare <name> [--force]` / `check <name>` | datasets and their drivers |
+| `useml monitor snapshot [--light]` / `serve [--port N]` / `deploy [--space ID]` / `start` / `stop` / `status` | the private dashboard and its agent |
 | `useml config ls` / `describe <name>` / `show <name> [k=v ...]` / `find <hash>` | configs |
 | `useml exp ls` / `show` / `follow` / `log [-n N]` / `run [--no-follow]` / `stop [--now]` / `why` / `attach` / `stack` `<name>` | experiences |
 | `useml exp bundle <name> [-o DIR] [--data auto\|rows\|none] [--archive] [--checkpoints] [--partial]` | standalone archive |

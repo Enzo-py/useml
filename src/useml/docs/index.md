@@ -1,7 +1,7 @@
 # useml documentation
 
 useml is a toolkit for machine-learning projects that run on big machines. It solves
-six problems that grow with every project:
+seven problems that grow with every project:
 
 | Problem | useml answer | Guide |
 |---|---|---|
@@ -10,6 +10,7 @@ six problems that grow with every project:
 | Every dataset has its own download and parsing code | drivers: declared once, loaded by name | [datasets.md](datasets.md) |
 | Results are recomputed because nothing remembers them | a key → value cache with a disk budget | [store.md](store.md) |
 | Datasets are re-embedded inside every experiment | data processed once, loaded by name | [data.md](data.md) |
+| Checking runs means logging into each server | a private dashboard, reachable from anywhere | [monitor.md](monitor.md) |
 | Models are hard to rebuild, experiments die silently | YAML configs and supervised experiments | [config.md](config.md), [exp.md](exp.md) |
 
 Each module works on its own: a project can use only `useml.hub`, or only `useml.exp`.

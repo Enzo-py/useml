@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "useml"
-version = "1.1.0"
+version = "1.2.0"
 description = "One root for every ML cache, one gate for every download, data processed once."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,7 +39,8 @@ Homepage = "https://github.com/Enzo-py/useml"
 hf = ["huggingface_hub>=0.20"]
 gdrive = ["gdown>=4.6"]
 watch = ["psutil>=5.9"]
-all = ["huggingface_hub>=0.20", "gdown>=4.6", "psutil>=5.9"]
+monitor = ["huggingface_hub>=0.20", "fastapi>=0.110", "uvicorn>=0.29"]
+all = ["huggingface_hub>=0.20", "gdown>=4.6", "psutil>=5.9", "fastapi>=0.110", "uvicorn>=0.29"]
 test = ["pytest>=7"]
 
 [project.scripts]

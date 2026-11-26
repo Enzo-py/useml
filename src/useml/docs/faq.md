@@ -49,5 +49,13 @@ See "The disk fills up" in [troubleshooting.md](troubleshooting.md).
 No: it contains a copy of useml. It needs Python and the packages listed in
 `environment/packages.txt`.
 
+**How do I see my experiments from my phone?**
+With the monitor: a private Hugging Face Space and an agent per machine, no port to open.
+See [monitor.md](monitor.md).
+
+**How do I change a setting without opening the TOML file?**
+`useml settings set <key> <value>` (`useml settings show` lists them). The dashboard's
+setup view writes that command for you.
+
 **How do I read the docs offline?**
 `useml docs` lists the guides; `useml docs <topic>` prints one.

@@ -42,14 +42,15 @@ def load(name: str, split: str | None = None, *, prepare_first: bool = True) -> 
     return dataset.split(split) if split else dataset
 
 
-def ls() -> list[dict]:
-    """Every registered driver: prepared or not, records, size on disk."""
+def ls(*, measure: bool = True) -> list[dict]:
+    """Every registered driver: prepared or not, records, size on disk (`measure=False`:
+    no size, nothing walked — a dataset can hold millions of files)."""
     out = []
     for name, cls in sorted(discover().items()):
         instance = cls(root() / name)
         index = Index(instance.root)
         size = sum(path.stat().st_size for path in instance.root.rglob("*") if path.is_file()) \
-            if instance.root.exists() else 0
+            if measure and instance.root.exists() else None
         prepared = index.exists()
         out.append({"name": name, "title": cls.card.title if cls.card else name,
                     "prepared": prepared,

@@ -3,6 +3,7 @@
     useml init [--root DIR] [--yes]   set up this machine and this project (adds, never overwrites)
     useml check [--measure]           check that everything is in place
     useml docs [topic] [--path]       read the documentation (installed with useml)
+    useml settings show | get <key> | set <key> <value> | unset <key>   the machine config
     useml paths                       where every cache goes (and where weights already are)
     useml hub ls                      what has been downloaded, how big, last used
     useml hub get <uri> [--extract]   download, print the local path
@@ -29,6 +30,11 @@
     useml datasets info <name> [--split S]   card, splits, fields (a summary)
     useml datasets prepare <name> [--force]  download what is missing, build the index, check
     useml datasets check <name>       run the driver's check
+
+    useml monitor snapshot [--light]  exactly what the agent would send, with your settings
+    useml monitor serve [--port N]    the dashboard on this machine only (127.0.0.1)
+    useml monitor deploy [--space ID] create the private Hugging Face Space
+    useml monitor start | stop | status   the agent of this machine
 
     useml config ls                   every config, by kind
     useml config show <name> [key=value ...]   the resolved YAML and its hash
@@ -296,6 +302,74 @@ def _datasets(args) -> int:
     return 1
 
 
+def _settings(args) -> int:
+    from . import _settings as settings
+    from . import paths
+
+    command = args.settings_command
+    try:
+        if command == "show":
+            print(f"# {paths.config_path()}")
+            for entry in settings.listing():
+                value = "—" if entry["value"] is None else settings.format_value(entry["value"])
+                print(f"{entry['key']:<22} {value:<34} {entry['meaning']}")
+            return 0
+        if command == "get":
+            value = settings.get(args.key)
+            print("" if value is None else settings.format_value(value))
+            return 0 if value is not None else 1
+        if command == "set":
+            value = settings.parse_value(args.key, args.value)
+            path = settings.edit(args.key, value)
+            print(f"{args.key} = {settings.format_value(value)}   ({path}; previous: {path.name}.bak)")
+            return 0
+        if command == "unset":
+            path = settings.edit(args.key, remove=True)
+            print(f"{args.key} removed ({path})")
+            return 0
+    except settings.SettingsError as error:
+        print(f"useml settings: {error}", file=sys.stderr)
+        return 2
+    return 1
+
+
+def _monitor(args) -> int:
+    from . import monitor
+
+    command = args.monitor_command
+    if command == "snapshot":
+        print(json.dumps(monitor.snapshot(full=not args.light), indent=1, default=str))
+        return 0
+    if command == "serve":
+        monitor.serve(port=args.port)
+        return 0
+    if command == "deploy":
+        result = monitor.deploy(args.space)
+        print(f"private Space ready: {result['page']}")
+        print(f"dashboard: {result['url']}  (it builds for a minute or two the first time)")
+        if result["recorded"]:
+            print("recorded in the machine config: [monitor] space")
+        print("next: useml monitor start   (on each machine that should report)")
+        return 0
+    if command == "start":
+        result = monitor.start()
+        if result.get("already"):
+            print(f"agent already running (pid {result['pid']})")
+        else:
+            where = f"tmux session {result['session']}" if result.get("backend") == "tmux" \
+                else f"detached, pid {result['pid']}"
+            print(f"agent started: {where}; log: useml paths → <home>/logs/monitor.log")
+        return 0
+    if command == "stop":
+        print("agent stopped" if monitor.stop() else "no agent running")
+        return 0
+    if command == "status":
+        for key, value in monitor.status().items():
+            print(f"  {key:<12} {value}")
+        return 0
+    return 1
+
+
 def _config(args) -> int:
     from . import config
 
@@ -471,6 +545,28 @@ def build_parser() -> argparse.ArgumentParser:
     check_dataset = datasets_commands.add_parser("check")
     check_dataset.add_argument("name")
 
+    settings_parser = commands.add_parser("settings", help="read and edit the machine config")
+    settings_commands = settings_parser.add_subparsers(dest="settings_command", required=True)
+    settings_commands.add_parser("show")
+    get_setting = settings_commands.add_parser("get")
+    get_setting.add_argument("key")
+    set_setting = settings_commands.add_parser("set")
+    set_setting.add_argument("key")
+    set_setting.add_argument("value")
+    unset_setting = settings_commands.add_parser("unset")
+    unset_setting.add_argument("key")
+
+    monitor_parser = commands.add_parser("monitor", help="the private dashboard and its agent")
+    monitor_commands = monitor_parser.add_subparsers(dest="monitor_command", required=True)
+    snapshot_parser = monitor_commands.add_parser("snapshot")
+    snapshot_parser.add_argument("--light", action="store_true")
+    serve_parser = monitor_commands.add_parser("serve")
+    serve_parser.add_argument("--port", type=int, default=8765)
+    deploy_parser = monitor_commands.add_parser("deploy")
+    deploy_parser.add_argument("--space", help="owner/name (default: <you>/useml-monitor)")
+    for name in ("start", "stop", "status"):
+        monitor_commands.add_parser(name)
+
     config_parser = commands.add_parser("config", help="YAML configs")
     config_commands = config_parser.add_subparsers(dest="config_command", required=True)
     config_commands.add_parser("ls")
@@ -530,6 +626,10 @@ def main(argv=None) -> int:
         return _exp(args)
     if args.command == "datasets":
         return _datasets(args)
+    if args.command == "monitor":
+        return _monitor(args)
+    if args.command == "settings":
+        return _settings(args)
     if args.command == "config":
         return _config(args)
     if args.command == "data":

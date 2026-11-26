@@ -119,3 +119,11 @@ def sleepy(seconds: float):
 
 def rows_of(dataset):
     return len(list(dataset))
+
+
+def train_with_metrics(steps: int, *, ctx):
+    for step in range(1, steps + 1):
+        ctx.metric(step, loss=1.0 / step, accuracy=step / steps)
+        ctx.progress(step, steps, "training")
+    print(f"trained in {ctx.dir}")                       # a path, to check the masking
+    return {"final_loss": 1.0 / steps}
