@@ -219,11 +219,18 @@ def curve_summary(curves: dict, limit: int = 8) -> list[str]:
             series = [(p.get("step"), p[name]) for p in points if isinstance(p.get(name), (int, float))]
             if not series:
                 continue
-            lower = bool(LOWER_IS_BETTER.search(name))
-            best = (min if lower else max)(series, key=lambda s: s[1])
-            arrow = "↓" if lower else "↑"
+            from .projects import HIGHER_IS_BETTER
+
+            lower, higher = bool(LOWER_IS_BETTER.search(name)), bool(HIGHER_IS_BETTER.search(name))
+            if lower or higher:
+                best = (min if lower else max)(series, key=lambda s: s[1])
+                tail = f"best {num(best[1])} @{num(best[0])}"
+            else:                                   # direction unknown: no "best"
+                low, high = min(series, key=lambda s: s[1]), max(series, key=lambda s: s[1])
+                tail = f"min {num(low[1])} @{num(low[0])}, max {num(high[1])} @{num(high[0])}"
+            arrow = "↓" if lower else "↑" if higher else ""
             out.append(f"{step}.{name}{arrow}: {num(series[0][1])} → {num(series[-1][1])} "
-                       f"(best {num(best[1])} @{num(best[0])}, {len(series)} pts)")
+                       f"({tail}, {len(series)} pts)")
     return out[:limit] + ([f"+{len(out) - limit} more curves"] if len(out) > limit else [])
 
 
@@ -360,10 +367,25 @@ def _runs_of(page: dict, now: float) -> list[dict]:
 def _main_result(runs: list[dict], wanted: str | None = None) -> str | None:
     from .projects import main_result
 
-    keys = [k for r in runs for k in (r.get("results") or {})]
+    keys = [k for r in runs for k in (r.get("results") or {}) if trusted(k)]
     if wanted and wanted in keys:
         return wanted
     return main_result(keys)
+
+
+def trusted(key: str) -> bool:
+    """False for a curve's "best" whose direction is unknown (records before 1.6 picked the
+    maximum of any curve)."""
+    if not key.endswith(".best"):
+        return True
+    from .projects import HIGHER_IS_BETTER
+
+    leaf = key[:-5].rsplit(".", 1)[-1]
+    return bool(LOWER_IS_BETTER.search(leaf) or HIGHER_IS_BETTER.search(leaf))
+
+
+def _results(run: dict) -> dict:
+    return {k: v for k, v in (run.get("results") or {}).items() if trusted(k)}
 
 
 def _factors(run: dict) -> dict:
@@ -420,6 +442,47 @@ def _best(runs: list[dict], key: str | None):
     if not scored:
         return None
     return (min if lower_is_better(key) else max)(scored, key=lambda r: r["results"][key])
+
+
+def diff(before: dict, after: dict, *, limit: int = 5) -> list[str]:
+    """What changed from one run to another: factors (old→new) and the steps whose code
+    changed."""
+    a, b = _factors(before), _factors(after)
+    changes = [f"{k} {value(a.get(k, '-'))}→{value(b.get(k, '-'))}"
+               for k in sorted(set(a) | set(b)) if json.dumps(a.get(k)) != json.dumps(b.get(k))]
+    code_a = {s["name"]: s.get("code") for s in before.get("steps") or []}
+    code = [s["name"] for s in after.get("steps") or [] if s.get("code") and code_a.get(s["name"]) not in (None, s.get("code"))]
+    out = changes[:limit] + ([f"+{len(changes) - limit} more"] if len(changes) > limit else [])
+    if code:
+        out.append("code of " + ",".join(code))
+    return out
+
+
+def evolution(runs: list[dict], main: str, *, prefix: str = "") -> list[str]:
+    """The method's record over time: each run that beat the best so far, by how much, and
+    what it changed from the previous best."""
+    lower = lower_is_better(main)
+    timeline = sorted((r for r in runs if isinstance((r.get("results") or {}).get(main), (int, float))),
+                      key=lambda r: r.get("ended") or 0)
+    if len(timeline) < 2:
+        return []
+    best, records, tried = None, [], 0
+    for run in timeline:
+        score = run["results"][main]
+        if best is None or (score < best["results"][main] if lower else score > best["results"][main]):
+            gain = "" if best is None else f" ({'+' if score - best['results'][main] > 0 else ''}{num(score - best['results'][main])} after {tried} other run{'s' if tried != 1 else ''})"
+            changed = diff(best, run) if best is not None else []
+            short = run["experience"][len(prefix):] if run["experience"].startswith(prefix) else run["experience"]
+            date = time.strftime("%m-%d", time.localtime(run["ended"])) if run.get("ended") else "?"
+            records.append(f"  {date} {short} {main}={num(score)}{gain}" + (f" · changed: {'; '.join(changed)}" if changed else "")
+                           + (f" · note: {run['note'][:90]}" if run.get("note") else ""))
+            best, tried = run, 0
+        else:
+            tried += 1
+    lines = [f"EVOLUTION of {main} (each new best, what it changed from the previous one):"] + records[-8:]
+    if tried:
+        lines.append(f"  since the last best: {tried} run{'s' if tried != 1 else ''}, none better")
+    return lines
 
 
 def project(src, name: str, *, method: str | None = None, result: str | None = None,
@@ -544,6 +607,8 @@ def project(src, name: str, *, method: str | None = None, result: str | None = N
         links.sort(reverse=True)
         lines.append("STRONGEST LINKS (r: −1..+1 for numbers, η: 0..1 for choices; a hint, not a proof): "
                      + "; ".join(text for _, text in links[:6]))
+    if main:
+        lines += evolution(distinct, main, prefix=f"{method}/")
     versions: dict = {}
     for run in sorted(kept, key=lambda r: r.get("ended") or 0):
         versions.setdefault(run.get("version"), []).append(run)
@@ -600,8 +665,8 @@ def run(src, ref: str, *, project_name: str | None = None, code: bool = False,
         lines += [f"  {line}" for line in message]
     if _factors(record):
         lines.append("FACTORS: " + " · ".join(f"{k}={value(v)}" for k, v in _factors(record).items()))
-    if record.get("results"):
-        shown = {k: v for k, v in record["results"].items() if not k.endswith(".last") or k[:-5] + ".best" not in record["results"]}
+    if _results(record):
+        shown = {k: v for k, v in _results(record).items() if not k.endswith(".last") or k[:-5] + ".best" not in record["results"]}
         lines.append("RESULTS: " + " · ".join(f"{k}={num(v)}" for k, v in shown.items()))
     curves = curve_summary(record.get("curves") or {})
     if curves:

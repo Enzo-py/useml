@@ -211,7 +211,11 @@ async def _keep(records: list, declarations: list) -> list:
                 _projects[declaration["name"]] = declaration
                 files[f"projects/{_slug(declaration['name'])}/project.json"] = declaration
     for record in valid:
-        if record["id"] not in _records:
+        previous = _records.get(record["id"])
+        same = previous is not None and \
+            {k: v for k, v in previous.items() if k != "recorded"} == \
+            {k: v for k, v in record.items() if k != "recorded"}
+        if not same:                       # new, or sent again with more (`resend`)
             files[f"projects/{_slug(record['project'])}/runs/{record['id']}.json"] = record
         _records[record["id"]] = record
     if not _history["where"]:

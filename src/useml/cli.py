@@ -505,6 +505,11 @@ def _monitor(args) -> int:
                 print(f"  {number}. {line}")
         print("next: useml monitor start   (on each machine that should report)")
         return 0
+    if command == "resend":
+        count = monitor.resend()
+        print(f"{count} run records will be sent again by the agent (about 10 per push); "
+              f"the dashboard keeps the newer ones")
+        return 0
     if command == "start":
         result = monitor.start()
         if result.get("already"):
@@ -788,6 +793,7 @@ def build_parser() -> argparse.ArgumentParser:
                                help="no private dataset for the records of finished runs")
     for name in ("start", "stop", "status"):
         monitor_commands.add_parser(name)
+    monitor_commands.add_parser("resend", help="send every run record again (fills old ones)")
 
     config_parser = commands.add_parser("config", help="YAML configs")
     config_commands = config_parser.add_subparsers(dest="config_command", required=True)

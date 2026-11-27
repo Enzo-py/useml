@@ -61,6 +61,12 @@ COUNT = re.compile(r"(^|[._/])(n|num|count|size|total|len|samples?|items?|rows?|
                    r"_version$|_count$", re.I)
 MAX_CURVE_POINTS = 120
 MAX_FACTOR_TEXT = 120
+MAX_REPORT_BYTES = 64 * 1024 * 1024     # a report is read whole up to this size
+#: Curves whose direction is known: lower is better / higher is better. Any other name
+#: gets no "best" (a decreasing `assign` may be a loss, or not).
+HIGHER_IS_BETTER = re.compile(r"(acc|accuracy|f1|auc|auroc|map\b|mrr|hits|ndcg|bleu|rouge|"
+                              r"meteor|score|r2|corr|pearson|spearman|precision|recall|iou|"
+                              r"dice|reward|win)", re.I)
 LOWER_IS_BETTER = re.compile(r"(loss|error|err\b|perplexity|ppl|mse|mae|rmse|wer|cer|fid|"
                              r"time|seconds|latency|memory|regret|distance)", re.I)
 
@@ -156,13 +162,21 @@ def main_result(keys) -> str | None:
     keys = list(keys)
     if not keys:
         return None
+    def leaf(key):
+        base = key[:-5] if key.endswith((".last", ".best")) else key
+        return base.rsplit(".", 1)[-1]
+    # Never a count or a label when anything else exists; then only keys most runs have
+    # (at least a quarter as many as the most frequent one).
+    pool = [k for k in keys if not COUNT.search(leaf(k))] or keys
+    most = max(pool.count(k) for k in set(pool))
+    common = [k for k in pool if pool.count(k) * 4 >= most]
 
     def rank(key):
         base = key[:-5] if key.endswith((".last", ".best")) else key
         leaf = base.rsplit(".", 1)[-1]
         return (bool(COUNT.search(leaf)), not MEASURE.search(leaf), -keys.count(key),
                 key.endswith(".last"), key)
-    return min(set(keys), key=rank)
+    return min(set(common), key=rank)
 
 
 def factors(spec: dict) -> dict:
@@ -197,12 +211,20 @@ def _numbers(prefix: str, value, out: dict, depth: int = 0) -> None:
             _numbers(f"{prefix}[{index}]", item, out, depth + 1)
 
 
+def numbers_of(value, prefix: str = "") -> dict:
+    """{dotted key: number} of a JSON value: what a report says, without its long lists."""
+    out: dict = {}
+    _numbers(prefix, value, out)
+    return {key.lstrip("."): number for key, number in out.items()}
+
+
 def results(experience) -> dict:
-    """{dotted key: number}: the numbers of the steps' JSON outputs."""
+    """{dotted key: number}: the numbers of the steps' JSON outputs (a report of any size
+    up to MAX_REPORT_BYTES; lists longer than 20 are left out)."""
     out: dict = {}
     for step in experience.steps():
         path = experience.path(step["name"]) / "output.json"
-        if not step["done"] or not path.exists() or path.stat().st_size > 256 * 1024:
+        if not step["done"] or not path.exists() or path.stat().st_size > MAX_REPORT_BYTES:
             continue
         try:
             _numbers(step["name"], json.loads(path.read_text()), out)
@@ -230,8 +252,10 @@ def curves(experience) -> tuple[dict, dict]:
             if not values:
                 continue
             summary[f"{step['name']}.{name}.last"] = values[-1]
-            summary[f"{step['name']}.{name}.best"] = (min if LOWER_IS_BETTER.search(name)
-                                                      else max)(values)
+            if LOWER_IS_BETTER.search(name):
+                summary[f"{step['name']}.{name}.best"] = min(values)
+            elif HIGHER_IS_BETTER.search(name):
+                summary[f"{step['name']}.{name}.best"] = max(values)
     return drawn, summary
 
 

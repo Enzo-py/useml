@@ -99,6 +99,11 @@ dashboard keeps them. The **Projects** tab shows:
 - **the methods**, the focus first: number of runs, code versions, best value of the main
   result, last run;
 - **the datasets** and which methods used them;
+- for a method, **its evolution**: every run in order with its main result, the line of
+  the best so far, and the list of each new best — by how much it beat the previous one,
+  after how many other attempts, what it changed (factors `old → new`, the steps whose
+  code changed) and its note. On a method's page, experience names are shown without the
+  method (`wide/v2/w8` → `v2/w8`);
 - for a method, **its versions**: a version is the code of the steps (a hash). Two runs
   of the same version ran the same code and differ only by their factors. The page says
   which step's code changed from one version to the next, and the git commit (`*` when
@@ -114,7 +119,8 @@ dashboard keeps them. The **Projects** tab shows:
 - **curves** of the runs side by side, the running ones included (thicker, marked
   "live", updated at every refresh): a new attempt is compared with the previous ones while
   it trains. A running run also shows its current values in the ablation map;
-- a run's page: results, factors, steps, configs, curves, and **New alternative**: the
+- a run's page: results (a report is a table, grouped, with a filter when long), factors,
+  steps, configs, curves, and **New alternative**: the
   run's declaration as Python, to edit (one value) and run on a machine. It becomes a new
   row of the map;
 - **Add a component**: the page writes the command that adds a method, a dataset or sets
@@ -153,4 +159,11 @@ default).
 - **`useml monitor serve`**: in `<useml home>/monitor/history/` on that machine.
 
 An agent marks a run as kept only when the dashboard answers that it stored it; it never
-sends the same run twice.
+sends the same run twice — unless asked: `useml monitor resend`, on a machine, sends all
+its runs again and the dashboard replaces the records that changed (for example, after an
+update of useml that reads more of each run).
+
+**What a record holds of a report**: every number of the steps' JSON outputs, whatever
+their size (up to 64 MB; lists longer than 20 are left out). A curve has a "best" only
+when its name says which way is better (`loss`, `error`… lower; `acc`, `f1`… higher);
+for other names (`assign`), its first, last, lowest and highest values.

@@ -105,7 +105,7 @@ min_interval = 10
 | `errors` | why a run stopped: the cause (signal, OOM…) and the end of the Python error |
 | `log` | the last `log_lines` lines of `run.log` |
 | `metrics` | curves: checkpoint metrics, `ctx.metric(...)` values, and what tqdm bars and printed lines show (see below) |
-| `results` | JSON outputs of finished steps (up to 64 KB each) |
+| `results` | JSON outputs of finished steps (up to 64 KB each; a bigger report: its numbers) |
 | `figures` | PNG figures of finished steps (up to 6, 400 KB each) |
 | `configs` | configs the steps read: name, hash, overrides, YAML |
 | `data` | names of the datasets and processed data the steps read |

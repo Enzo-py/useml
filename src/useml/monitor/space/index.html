@@ -278,6 +278,20 @@
   .code-block pre { padding-right: 64px; }
   .code-block button { position: absolute; top: 6px; right: 6px; }
 
+  /* evolution and reports */
+  .records { display: grid; gap: 2px; }
+  .record { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: grid; gap: 4px; }
+  .record:hover { background: var(--surface-2); }
+  .record-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .record-head b { font-size: 16px; }
+  .gain { color: var(--ok); font-weight: 600; font-size: 13px; }
+  .chips-row { display: flex; gap: 4px; flex-wrap: wrap; }
+  .chips-row .chip-note { font-family: var(--mono); font-size: 11px; }
+  .report-wrap { max-height: 60vh; overflow: auto; }
+  table.report td { padding: 4px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  table.report tr.group td { background: var(--surface-2); font-weight: 600; font-size: 12px; color: var(--muted); }
+  table.report td.num { text-align: right; }
+
   /* onboarding & toast */
   .onboard { padding: 22px; display: grid; gap: 8px; max-width: 640px; }
   .onboard h3 { margin: 0; font-size: 17px; }
@@ -658,7 +672,7 @@ function machineCard(machine, all) {
   const res = el("div", {class: "res"});
   for (const gpu of info.gpus || []) {
     const fraction = gpu.mem_total ? gpu.mem_used / gpu.mem_total : 0;
-    res.append(el("div", {class: "line"}, el("span", {class: "ellipsis"}, `GPU ${gpu.index} · ${gpu.name}`),
+    res.append(el("div", {class: "line"}, el("span", {class: "ellipsis", title: gpu.name || ""}, `GPU ${gpu.index}`),
                   el("span", {}, `${gpu.util}% · ${bytes(gpu.mem_used)} / ${bytes(gpu.mem_total)}`)), meter(fraction, load(fraction)));
   }
   if (info.ram && info.ram.total) {
@@ -874,7 +888,14 @@ function drawerContent(experience, status, machine) {
     if (!out.length) out.push(el("div", {class: "loading"}, "Not enough points to draw a curve yet."));
   } else if (activeTab === "outputs") {
     if (!details[`${machine.alias}::${experience.name}`]) out.push(el("div", {class: "loading"}, "Loading the latest results…"));
-    for (const [step, value] of Object.entries(experience.results || {})) out.push(block(`Result · ${step}`, el("pre", {}, JSON.stringify(value, null, 2))));
+    for (const [step, value] of Object.entries(experience.results || {})) {
+      const big = value && typeof value === "object" && value.__numbers_of_a_report_of__;
+      const numbers = flatten(value);
+      const table = Object.keys(numbers).length ? resultsTable(numbers, {title: `Report · ${step}`,
+        note: big ? `a report of ${bytes(big)}: its numbers (long lists left out)` : null}) : null;
+      out.push(table || block(`Result · ${step}`, el("pre", {}, JSON.stringify(value, null, 2))));
+      if (table && !big) out.push(el("details", {class: "small"}, el("summary", {class: "muted"}, `raw JSON of ${step}`), el("pre", {}, JSON.stringify(value, null, 2))));
+    }
     if ((experience.figures || []).length) {
       out.push(block("Figures", el("div", {class: "figures"}, experience.figures.map((figure) => {
         const img = el("img", {alt: `${figure.step} ${figure.name}`, loading: "lazy"});
@@ -1149,9 +1170,20 @@ function methodsOf(project, runs) {
   for (const run of runs) names.add(run.method || "(unassigned)");
   return [...names].sort((a, b) => (b === project.focus) - (a === project.focus) || a.localeCompare(b));
 }
+const HIGHER_BETTER = /(acc|accuracy|f1|auc|auroc|map\b|mrr|hits|ndcg|bleu|rouge|meteor|score|r2|corr|pearson|spearman|precision|recall|iou|dice|reward|win)/i;
+function trusted(key) {
+  // A curve's "best" whose direction is unknown is not shown (runs kept before 1.6 took the max).
+  if (!key.endsWith(".best")) return true;
+  const leaf = key.slice(0, -5).split(".").pop();
+  return LOWER_BETTER.test(leaf) || HIGHER_BETTER.test(leaf);
+}
+function shortName(name) {
+  // On a method's page, its experiences are named without the method: "wide/v2/w8" → "v2/w8".
+  return view.kind === "method" && name.startsWith(`${view.method}/`) ? name.slice(view.method.length + 1) : name;
+}
 function resultKeys(runs) {
   const keys = new Set();
-  for (const run of runs) for (const key of Object.keys(run.results || {})) keys.add(key);
+  for (const run of runs) for (const key of Object.keys(run.results || {})) if (trusted(key)) keys.add(key);
   return [...keys].sort((a, b) => (a.endsWith(".last") - b.endsWith(".last")) || a.localeCompare(b));
 }
 function lowerIsBetter(key) { return LOWER_BETTER.test(key.split(".").slice(-2).join(".")) !== !!flipped[key]; }
@@ -1165,15 +1197,19 @@ function isPlumbing(key, value) {
   return PLUMBING_KEY.test(key.split(".").pop()) || (typeof value === "string" && PLUMBING_VALUE.test(value));
 }
 function guessMain(runs) {
-  const all = runs.flatMap((r) => Object.keys(r.results || {}));
+  // Never a count or a label if anything else exists; only keys a quarter of the runs have;
+  // then a quality measure, the most frequent, a curve's best before its last.
+  const leaf = (k) => (k.endsWith(".last") || k.endsWith(".best") ? k.slice(0, -5) : k).split(".").pop();
+  let all = runs.flatMap((r) => Object.keys(r.results || {})).filter(trusted);
   if (!all.length) return null;
+  const notCounts = all.filter((k) => !COUNT.test(leaf(k)));
+  if (notCounts.length) all = notCounts;
   const count = {};
   for (const k of all) count[k] = (count[k] || 0) + 1;
-  const rank = (k) => {
-    const leaf = (k.endsWith(".last") || k.endsWith(".best") ? k.slice(0, -5) : k).split(".").pop();
-    return [COUNT.test(leaf) ? 1 : 0, MEASURE.test(leaf) ? 0 : 1, -count[k], k.endsWith(".last") ? 1 : 0, k];
-  };
-  return Object.keys(count).sort((a, b) => { const x = rank(a), y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; })[0];
+  const most = Math.max(...Object.values(count));
+  const rank = (k) => [MEASURE.test(leaf(k)) ? 0 : 1, -count[k], k.endsWith(".last") ? 1 : 0, k];
+  return Object.keys(count).filter((k) => count[k] * 4 >= most)
+    .sort((a, b) => { const x = rank(a), y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; })[0];
 }
 function primaryOf(project, runs) {
   const keys = resultKeys(runs);
@@ -1197,6 +1233,41 @@ function varying(runs) {
     (values.size > 1 ? vary : fixed).push(key);
   }
   return {vary, fixed};
+}
+function flatten(value, prefix = "", out = {}) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const [k, v] of Object.entries(value)) if (k !== "__numbers_of_a_report_of__") flatten(v, prefix ? `${prefix}.${k}` : k, out);
+  } else if (Array.isArray(value) && value.length <= 20) {
+    value.forEach((v, i) => flatten(v, `${prefix}[${i}]`, out));
+  } else if (typeof value === "number" || typeof value === "boolean" || (typeof value === "string" && value.length <= 80)) {
+    out[prefix] = value;
+  }
+  return out;
+}
+function resultsTable(entries, {title = "Results", note = null} = {}) {
+  // A report as a table: grouped by its first part, searchable when long.
+  const order = {};
+  const rows = Object.entries(entries).filter(([k]) => trusted(k))
+    .map(([k, v], i) => { const head = k.split(".")[0]; order[head] ??= i; return [k, v]; })
+    .sort((a, b) => order[a[0].split(".")[0]] - order[b[0].split(".")[0]]);   // one block per group
+  if (!rows.length) return null;
+  const body = el("tbody");
+  const search = rows.length > 30 ? el("input", {class: "search", type: "search", placeholder: `Filter ${rows.length} values…`}) : null;
+  const draw = () => {
+    const words = (search?.value || "").toLowerCase().split(/\s+/).filter(Boolean);
+    let group = null;
+    const out = [];
+    for (const [key, value] of rows) {
+      if (words.length && !words.every((w) => key.toLowerCase().includes(w))) continue;
+      const [head, ...rest] = key.split(".");
+      if (head !== group) { group = head; out.push(el("tr", {class: "group"}, el("td", {colspan: "2"}, head))); }
+      out.push(el("tr", {}, el("td", {class: "mono small"}, rest.join(".") || head), el("td", {class: "num mono"}, typeof value === "number" ? number(value) : String(value))));
+    }
+    body.replaceChildren(...out);
+  };
+  search?.addEventListener("input", draw); draw();
+  return block(title, note ? el("div", {class: "tiny muted", style: {marginBottom: "6px"}}, note) : null, search,
+    el("div", {class: "report-wrap"}, el("table", {class: "report"}, body)));
 }
 function show(value) {
   if (value === null || value === undefined) return "—";
@@ -1391,6 +1462,7 @@ function renderMethod(root) {
     el("a", {href: `#/new/${encodeURIComponent(project.name)}/method`}, "How to start one")));
   else {
     out.push(runningSection(runs));
+    out.push(evolutionSection(project, runs));
     out.push(versionsSection(project, runs));
     out.push(ablationSection(project, runs, {scope: "method"}));
     out.push(curvesSection(runs));
@@ -1398,6 +1470,76 @@ function renderMethod(root) {
   root.replaceChildren(...out.filter(Boolean));
 }
 
+function changes(before, after) {
+  // What a run changed from another: its factors (old → new), and the steps whose code changed.
+  const a = before.factors || {}, b = after.factors || {};
+  const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => !isPlumbing(k, b[k] ?? a[k])).sort();
+  const out = keys.filter((k) => JSON.stringify(a[k] ?? null) !== JSON.stringify(b[k] ?? null))
+    .map((k) => `${k}: ${show(a[k] ?? "—")} → ${show(b[k] ?? "—")}`);
+  const code = Object.fromEntries((before.steps || []).map((s) => [s.name, s.code]));
+  const steps = (after.steps || []).filter((s) => s.code && code[s.name] && code[s.name] !== s.code).map((s) => s.name);
+  if (steps.length) out.push(`code of ${steps.join(", ")}`);
+  return out;
+}
+function evolutionSection(project, runs) {
+  const main = primaryOf(project, runs);
+  if (!main) return null;
+  const timeline = runs.filter((r) => !r.live && typeof r.results?.[main] === "number").sort((a, b) => (a.ended || 0) - (b.ended || 0));
+  if (timeline.length < 2) return null;
+  const lower = lowerIsBetter(main);
+  let best = null, tried = 0;
+  const records = [], frontier = [];
+  for (const run of timeline) {
+    const value = run.results[main];
+    if (best === null || (lower ? value < best.results[main] : value > best.results[main])) {
+      records.push({run, previous: best, tried}); best = run; tried = 0;
+    } else tried++;
+    frontier.push(best.results[main]);
+  }
+  // The chart: every run in order (x), its result (y); the line is the best so far.
+  const versions = [...new Set(timeline.map((r) => r.version))];
+  const w = 640, h = 200, left = 48, right = 12, top = 12, bottom = 26;
+  const ys = timeline.map((r) => r.results[main]);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const px = (i) => left + (timeline.length === 1 ? .5 : i / (timeline.length - 1)) * (w - left - right);
+  const py = (y) => top + (1 - (maxY === minY ? .5 : (y - minY) / (maxY - minY))) * (h - top - bottom);
+  const stair = frontier.map((y, i) => `${i ? `L${px(i).toFixed(1)},${py(frontier[i - 1]).toFixed(1)} ` : "M"}${px(i).toFixed(1)},${py(y).toFixed(1)}`).join(" ");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("class", "scatter");
+  const isRecord = new Set(records.map((r) => r.run));
+  svg.innerHTML = `<path d="${stair}" fill="none" stroke="var(--ok)" stroke-width="2" vector-effect="non-scaling-stroke"/>` +
+    timeline.map((r, i) => `<circle cx="${px(i).toFixed(1)}" cy="${py(r.results[main]).toFixed(1)}" r="${isRecord.has(r) ? 6 : 4}" fill="${PALETTE[versions.indexOf(r.version) % PALETTE.length]}" fill-opacity="${isRecord.has(r) ? 1 : .55}" ${isRecord.has(r) ? 'stroke="var(--ok)" stroke-width="2"' : ""}><title></title></circle>`).join("");
+  [...svg.querySelectorAll("title")].forEach((t, i) => { const r = timeline[i]; t.textContent = `${shortName(r.experience)} · ${number(r.results[main])} · v${r.version}${r.note ? `\n${r.note}` : ""}`; });
+  const label = (text, x, y, anchor) => {
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("x", x); t.setAttribute("y", y); t.setAttribute("font-size", "11"); t.setAttribute("text-anchor", anchor);
+    t.setAttribute("fill", "var(--muted)"); t.textContent = text; svg.append(t);
+  };
+  label(number(maxY), left - 6, top + 8, "end"); label(number(minY), left - 6, h - bottom, "end");
+  const day = (r) => r.ended ? new Date(r.ended * 1000).toLocaleDateString(undefined, {month: "short", day: "numeric"}) : "";
+  label(day(timeline[0]), left, h - 8, "start"); label(day(timeline[timeline.length - 1]), w - right, h - 8, "end");
+  const list = el("div", {class: "records"}, [...records].reverse().map(({run, previous, tried: before}) => {
+    const delta = previous ? run.results[main] - previous.results[main] : null;
+    const diff = previous ? changes(previous, run) : [];
+    return el("div", {class: "record", onclick: () => go(`#/run/${encodeURIComponent(project.name)}/${run.id}`)},
+      el("div", {class: "record-head"},
+        el("b", {}, number(run.results[main])),
+        delta !== null ? el("span", {class: "gain"}, `${delta > 0 ? "+" : ""}${number(delta)}`) : el("span", {class: "faint small"}, "first"),
+        el("span", {}, shortName(run.experience)),
+        el("span", {class: "faint small"}, `${day(run)} · v${run.version}${before ? ` · after ${before} other run${before > 1 ? "s" : ""}` : ""}`)),
+      diff.length ? el("div", {class: "chips-row"}, diff.slice(0, 6).map((d) => el("span", {class: "chip-note"}, d)),
+                       diff.length > 6 ? el("span", {class: "faint small"}, `+${diff.length - 6}`) : null) : null,
+      run.note ? el("div", {class: "small muted ellipsis", title: run.note}, run.note) : null);
+  }));
+  return el("section", {}, el("h2", {}, "Evolution ", el("span", {class: "count"}, `${main} · ${lower ? "lower" : "higher"} is better`)),
+    el("div", {class: "card block"}, svg,
+      el("div", {class: "legend"}, versions.map((v, i) => el("span", {}, el("i", {style: {background: PALETTE[i % PALETTE.length], height: "8px", width: "8px", borderRadius: "50%"}}),
+        `v${v} (${timeline.filter((r) => r.version === v).length})`)),
+        el("span", {}, el("i", {style: {background: "var(--ok)"}}), "best so far")),
+      el("h4", {style: {margin: "14px 0 6px"}}, `${records.length} new best${records.length > 1 ? "s" : ""}`
+        + (tried ? ` · since the last one, ${tried} run${tried > 1 ? "s" : ""}, none better` : "")),
+      list));
+}
 function versionsSection(project, runs) {
   const kept = runs.filter((r) => !r.live);
   if (!kept.length) return null;
@@ -1468,7 +1610,7 @@ function ablationSection(project, runs, {scope}) {
   const body = sorted.map((run) => {
     const cells = [el("td", {}, run.live ? null : el("input", {type: "radio", name: "reference", checked: run.key === mapState.reference ? "checked" : null,
         "aria-label": "Use as reference", onclick: (e) => { e.stopPropagation(); mapState.reference = mapState.reference === run.key ? null : run.key; renderProjectsView(); }})),
-      el("td", {}, el("div", {}, run.experience, run.times > 1 ? el("span", {class: "faint small"}, ` ×${run.times}`) : null), el("div", {class: "sub"}, run.live ? `${run.machine} · now` : `${run.machine || ""}${run.ended ? ` · ${ago(Date.now() / 1000 - run.ended)}` : ""}`)),
+      el("td", {title: run.note || run.experience}, el("div", {}, shortName(run.experience), run.times > 1 ? el("span", {class: "faint small"}, ` ×${run.times}`) : null), el("div", {class: "sub"}, run.live ? `${run.machine} · now` : `${run.machine || ""}${run.ended ? ` · ${ago(Date.now() / 1000 - run.ended)}` : ""}`)),
       el("td", {}, pill(run.status))];
     for (const key of shownResults) {
       const value = run.results?.[key];
@@ -1563,7 +1705,7 @@ function scatter(link, cell) {
     html += `<circle cx="${px(xs[i]) + jitter}" cy="${py(ys[i])}" r="5" fill="var(--accent)" fill-opacity=".75"><title></title></circle>`;
   });
   svg.innerHTML = html;
-  [...svg.querySelectorAll("title")].forEach((t, i) => { t.textContent = `${link.pairs[i][2].experience}: ${show(link.pairs[i][0])} → ${number(ys[i])}`; });
+  [...svg.querySelectorAll("title")].forEach((t, i) => { t.textContent = `${shortName(link.pairs[i][2].experience)}: ${show(link.pairs[i][0])} → ${number(ys[i])}`; });
   const label = (text, x, y, anchor) => {
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
     t.setAttribute("x", x); t.setAttribute("y", y); t.setAttribute("font-size", "11"); t.setAttribute("text-anchor", anchor);
@@ -1608,7 +1750,7 @@ function curvesSection(runs) {
         (s.run.live ? `<circle cx="${px(lx).toFixed(1)}" cy="${py(ly).toFixed(1)}" r="4" fill="${PALETTE[i % PALETTE.length]}"/>` : "");
     }).join("");
     box.append(svg, el("div", {class: "legend"}, series.map((s, i) => el("span", {}, el("i", {style: {background: PALETTE[i % PALETTE.length]}}),
-      `${s.run.experience}${s.run.live ? " · live" : ""} · ${number(s.points[s.points.length - 1][1])}`))),
+      `${shortName(s.run.experience)}${s.run.live ? " · live" : ""} · ${number(s.points[s.points.length - 1][1])}`))),
       el("div", {class: "tiny muted"}, `${metric}: ${number(minY)} to ${number(maxY)} · step ${number(minX)} to ${number(maxX)}`));
   }
   return el("section", {}, el("h2", {}, "Curves ", el("span", {class: "count"}, "the runs side by side")), box);
@@ -1634,7 +1776,8 @@ function renderRun() {
     if (run.error && (run.error.meaning || run.error.message)) out.push(el("div", {class: "card block error-box"}, el("h4", {}, "Why it stopped"),
       run.error.meaning ? el("div", {class: "meaning"}, run.error.meaning) : null, run.error.message ? el("pre", {}, run.error.message) : null));
     const facts = (entries) => { const kv = el("div", {class: "kv small"}); for (const [k, v] of entries) kv.append(el("div", {}, k), el("div", {class: "mono"}, show(v))); return kv; };
-    if (Object.keys(run.results || {}).length) out.push(block("Results", facts(Object.entries(run.results))));
+    const table = resultsTable(run.results || {});
+    if (table) out.push(table);
     if (Object.keys(run.factors || {}).length) out.push(block("Factors", facts(Object.entries(run.factors))));
     out.push(block("Steps", el("div", {class: "steps"}, (run.steps || []).map((s, i) => el("div", {class: `step${s.done ? " done" : ""}`},
       el("span", {class: "mark"}, s.done ? "✓" : String(i + 1)), el("span", {}, s.name), el("span", {class: "small muted"}, s.done ? duration(s.seconds) : ""),

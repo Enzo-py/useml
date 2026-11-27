@@ -108,6 +108,7 @@ class Agent:
         payload = {"machine": self.alias, "full": full,
                    "snapshot": snapshot(full=full, config=self.config)}
         records = []
+        self._reload_sent()
         if time.time() >= self.history_retry:
             try:
                 records = pending_records(self.config, self.sent)
@@ -134,6 +135,16 @@ class Agent:
 
         return paths.directory("monitor") / "recorded.json"
 
+    def _reload_sent(self) -> None:
+        """`useml monitor resend` empties the file: read it again when it changed."""
+        try:
+            stamp = self._sent_file().stat().st_mtime
+        except OSError:
+            stamp = None
+        if stamp != getattr(self, "_sent_stamp", None):
+            self._sent_stamp = stamp
+            self.sent = self._load_sent()
+
     def _load_sent(self) -> set:
         try:
             return set(json.loads(self._sent_file().read_text()).get("ids", []))
@@ -145,6 +156,10 @@ class Agent:
         temporary = path.with_suffix(".tmp")
         temporary.write_text(json.dumps({"ids": sorted(self.sent)}))
         os.replace(temporary, path)
+        try:
+            self._sent_stamp = path.stat().st_mtime
+        except OSError:
+            pass
 
     # ── change detection ─────────────────────────────────────────────────────
 
@@ -272,6 +287,23 @@ def start() -> dict:
             break
         time.sleep(0.1)
     return {"backend": "detached", "pid": process.pid}
+
+
+def resend() -> int:
+    """Forget which run records were kept: the agent sends them all again (a dozen per
+    push), and the dashboard replaces those that changed — e.g. to add the numbers of
+    reports an older useml could not read. Returns how many were forgotten."""
+    from .. import paths
+
+    path = paths.directory("monitor") / "recorded.json"
+    try:
+        count = len(json.loads(path.read_text()).get("ids", []))
+    except (OSError, ValueError, AttributeError):
+        count = 0
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"ids": []}))
+    os.replace(temporary, path)
+    return count
 
 
 def stop(timeout: float = 15.0) -> bool:

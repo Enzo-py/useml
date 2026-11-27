@@ -200,3 +200,69 @@ def test_mcp_protocol(project, monkeypatch):
     assert "train.steps" in answers[2]["result"]["content"][0]["text"]
     assert answers[2]["result"]["isError"] is False and answers[3]["result"]["isError"] is True
     assert answers[4]["error"]["code"] == -32601 and answers[5]["error"]["code"] == -32700
+
+
+# ── reports, curves of unknown direction, evolution, resend ──────────────────
+
+def test_a_big_report_gives_its_numbers(project):
+    from useml.monitor import snapshot
+
+    with exp.experience("wide/report", detach=False) as e:
+        e.step(steps.big_report, 3000, name="report")
+    record = projects.record(exp.open("wide/report"))
+    assert record["results"]["report.metrics.edge_f1"] == 0.42          # > 64 KB, still read
+    sent = next(x for x in snapshot(full=True)["experiences"] if x["name"] == "wide/report")
+    report = sent["results"]["report"]
+    assert report["__numbers_of_a_report_of__"] > 64 * 1024
+    assert report["metrics.edge_f1"] == 0.42 and "per_sample" not in json.dumps(report)
+
+
+def test_no_best_for_a_curve_of_unknown_direction(project):
+    with exp.experience("wide/curves", detach=False) as e:
+        e.step(steps.assign_curve, 10, name="train")
+    results = projects.record(exp.open("wide/curves"))["results"]
+    assert "train.assign.last" in results and "train.assign.best" not in results
+    assert results["train.val_acc.best"] == 0.9
+    text = info.run(info.Local(), "wide/curves")
+    assert "train.assign: 2 → 1.1 (min 1.1 @9, max 2 @0" in text and "train.val_acc↑" in text
+    assert not info.trusted("model.assign.best") and info.trusted("val_acc.best")
+
+
+def test_evolution_lists_each_new_best_and_what_changed(project):
+    projects.set_method("wide", result="train.final_loss")
+    text = info.project(info.Local(), "robust-vision", method="wide")
+    block = text.split("EVOLUTION of train.final_loss")[1].split("VERSIONS")[0]
+    assert "a train.final_loss=0.25" in block and "b train.final_loss=0.125 (-0.125 after 0 other runs)" in block
+    assert "changed: train.steps 4→8" in block and "c train.final_loss=0.08333" in block
+
+
+def test_resend_lets_the_dashboard_replace_a_record(project, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from useml import monitor
+    from useml.monitor import _agent
+
+    history = Path(os.environ["USEML_ROOT"]) / "history"
+    monkeypatch.setenv("USEML_HISTORY_DIR", str(history))
+    monkeypatch.setenv("USEML_MONITOR_TOKEN", "local-secret")
+    monkeypatch.delenv("SPACE_ID", raising=False)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("resend_app", monitor.space_folder() / "app.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    client = TestClient(module.app)
+    agent = monitor.Agent(url="http://testserver", token="local-secret")
+    monkeypatch.setattr(agent, "_request", lambda method, path, body=None, timeout=0: client.request(
+        method, path, content=body, headers={"X-Useml-Token": "local-secret",
+                                             "Content-Type": "application/json"}).json())
+    agent.push(full=True)
+    kept = len(agent.sent)
+    assert kept == 4
+    file = next(history.glob("projects/robust-vision/runs/*.json"))
+    old = json.loads(file.read_text())
+    old["results"] = {}                                   # as an older useml wrote it
+    file.write_text(json.dumps(old))
+    module._records[old["id"]] = old
+    assert monitor.resend() == kept
+    agent.push(full=False)                                # sends them again
+    assert json.loads(file.read_text())["results"]        # replaced with the full record

@@ -118,6 +118,7 @@ printed lines ([exp.md](exp.md)).
 | `useml project show` / `runs` / `export [--format md\|json]` | this repository's project: methods, datasets, runs |
 | `useml info [project <name> [-m M] \| run <ref> [--code] \| exp <machine>:<name> \| machine <m>] [--local] [--json]` | runs, projects, machines in few words; read only ([info.md](info.md)) |
 | `useml mcp` | the same views as MCP tools for AI assistants |
+| `useml monitor resend` | send every run record of this machine again (fills records kept by an older useml) |
 | `useml project init [--yes] [--name N]` | propose a `[project]` from the experiences that exist; `--yes` writes it (additions only) |
 | `useml project describe <text>` / `focus <method>` | the description, the method you work on |
 | `useml project method add\|set <name> [-d TEXT] [-s STATUS] [-e GLOB…] [-r RESULT]` / `method rm <name>` | the methods (`-r`: the result its runs are ranked by) |

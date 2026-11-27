@@ -148,3 +148,14 @@ def explicit_metrics(n: int, *, ctx):
         ctx.metric(i, mine=float(i))
         print(f"other={i}")
     return n
+
+
+def big_report(n: int):
+    """A report too big to send whole (> 64 KB): its numbers still count."""
+    return {"metrics": {"edge_f1": 0.42, "n_test": n}, "per_sample": [{"i": i, "score": i / n} for i in range(n)]}
+
+
+def assign_curve(steps: int, *, ctx):
+    for step in range(steps):
+        ctx.metric(step, assign=2.0 - step / steps, val_acc=step / steps)
+    return {}

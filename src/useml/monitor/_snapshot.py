@@ -164,11 +164,21 @@ def describe_experience(experience, config: dict, *, full: bool) -> dict:
         results = {}
         for step in steps:
             path = experience.path(step["name"]) / "output.json"
-            if step["done"] and path.exists() and path.stat().st_size <= MAX_RESULT_BYTES:
-                try:
+            if not step["done"] or not path.exists():
+                continue
+            size = path.stat().st_size
+            try:
+                if size <= MAX_RESULT_BYTES:
                     results[step["name"]] = json.loads(path.read_text())
-                except ValueError:
-                    pass
+                else:
+                    # A big report: its numbers, not its long lists (they would be MBs).
+                    from ..projects import MAX_REPORT_BYTES, numbers_of
+
+                    if size <= MAX_REPORT_BYTES:
+                        results[step["name"]] = {"__numbers_of_a_report_of__": size,
+                                                 **numbers_of(json.loads(path.read_text()))}
+            except ValueError:
+                pass
         out["results"] = results
     if "figures" in share:
         figures = []

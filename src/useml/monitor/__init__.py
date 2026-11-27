@@ -19,7 +19,7 @@ import threading
 import time
 from pathlib import Path
 
-from ._agent import Agent, agent_pid, dashboard_url, space_url, start, stop
+from ._agent import Agent, agent_pid, dashboard_url, resend, space_url, start, stop
 from ._share import DEFAULT_SHARE, GROUPS, Masker, default_alias, settings
 from ._snapshot import snapshot
 
@@ -152,5 +152,5 @@ def status() -> dict:
             "share": config["share"], "experiences": config["experiences"]}
 
 
-__all__ = ["snapshot", "settings", "serve", "deploy", "start", "stop", "status", "Agent",
+__all__ = ["snapshot", "settings", "serve", "deploy", "start", "stop", "status", "resend", "Agent",
            "GROUPS", "DEFAULT_SHARE", "Masker", "default_alias", "space_url", "space_folder"]
