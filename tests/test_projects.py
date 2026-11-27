@@ -243,7 +243,7 @@ def test_editing_commands_keep_the_file(bare, capsys):
     declared = projects.declared()
     assert declared["description"] == "Robust classifiers" and declared["focus"] == "wide"
     assert declared["methods"]["wide"] == {"description": "Wider", "status": "active",
-                                           "experiences": ["wide/*"]}
+                                           "experiences": ["wide/*"], "result": None}
     assert declared["datasets"] == ["cifar10"]
     assert main(["project", "method", "rm", "wide"]) == 0
     declared = projects.declared()

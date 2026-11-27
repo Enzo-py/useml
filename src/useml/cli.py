@@ -385,16 +385,57 @@ def _edit_project(args) -> int:
             path = projects.remove_method(args.name)
         elif args.method_command == "add":
             path = projects.add_method(args.name, description=args.description or "",
-                                       status=args.status or "", experiences=args.experiences)
+                                       status=args.status or "", experiences=args.experiences,
+                                       result=args.result)
         else:
             path = projects.set_method(args.name, description=args.description,
-                                       status=args.status, experiences=args.experiences)
+                                       status=args.status, experiences=args.experiences,
+                                       result=args.result)
     else:
         if args.dataset_command == "add":
             path = projects.set_datasets(add=args.names)
         else:
             path = projects.set_datasets(remove=args.names)
     print(f"{path} updated (previous: {path.name}.bak)")
+    return 0
+
+
+def _info(args) -> int:
+    from . import info
+
+    try:
+        src = info.source(local=getattr(args, "local", False))
+        command = args.info_command
+        if getattr(args, "json", False):
+            if command == "project":
+                data = src.project(args.name)
+            elif command == "run":
+                data = info._find_run(src, args.ref, args.project)
+            elif command == "exp":
+                machine, name = info._split_ref(args.ref)
+                data = {"state": src.state(), "detail": src.experience(machine, name) if machine else None}
+            elif command == "machine":
+                data = {"state": src.state(), "setup": src.setup(args.ref)}
+            else:
+                data = {"state": src.state(), "projects": src.projects()}
+            print(json.dumps(data, indent=1, default=str))
+            return 0
+        if command == "project":
+            text = info.project(src, args.name, method=args.method, result=args.result,
+                                limit=args.limit, max_factors=args.factors)
+        elif command == "run":
+            text = info.run(src, args.ref, project_name=args.project, code=args.code,
+                            configs=args.configs)
+        elif command == "exp":
+            text = info.experience(src, args.ref, log=args.log)
+        elif command == "machine":
+            text = info.machine(src, args.ref)
+        else:
+            text = info.overview(src)
+    except info.InfoError as error:
+        print(f"useml info: {error}", file=sys.stderr)
+        return 2
+    print(text)
     return 0
 
 
@@ -696,11 +737,44 @@ def build_parser() -> argparse.ArgumentParser:
         verb_parser.add_argument("--status", "-s", help="free text: idea, active, reference…")
         verb_parser.add_argument("--experiences", "-e", nargs="*", metavar="GLOB",
                                  help="names of its experiences (globs)")
+        verb_parser.add_argument("--result", "-r", metavar="KEY",
+                                 help="the result its runs are ranked by (e.g. evaluate.f1)")
     method_commands.add_parser("rm").add_argument("name")
     dataset_parser = project_commands.add_parser("dataset", help="add or remove datasets")
     dataset_commands = dataset_parser.add_subparsers(dest="dataset_command", required=True)
     dataset_commands.add_parser("add").add_argument("names", nargs="+")
     dataset_commands.add_parser("rm").add_argument("names", nargs="+")
+
+    info_common = argparse.ArgumentParser(add_help=False)
+    info_common.add_argument("--local", action="store_true", default=argparse.SUPPRESS,
+                             help="this machine only")
+    info_common.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                             help="the data, unformatted")
+    info_parser = commands.add_parser(
+        "info", parents=[info_common],
+        help="runs, projects, machines in few words (for you or an AI); read only")
+    info_commands = info_parser.add_subparsers(dest="info_command")
+    info_project = info_commands.add_parser("project", parents=[info_common],
+                                            help="methods, running runs, runs, links")
+    info_project.add_argument("--factors", type=int, default=10, help="factor columns shown")
+    info_project.add_argument("name")
+    info_project.add_argument("-m", "--method")
+    info_project.add_argument("-r", "--result", help="the result runs are ranked by")
+    info_project.add_argument("--limit", type=int, default=25)
+    info_run = info_commands.add_parser("run", parents=[info_common],
+                                        help="one kept run (id prefix or experience name)")
+    info_run.add_argument("ref")
+    info_run.add_argument("-p", "--project")
+    info_run.add_argument("--code", action="store_true", help="its declaration as Python")
+    info_run.add_argument("--configs", action="store_true", help="the YAML of its configs")
+    info_exp = info_commands.add_parser("exp", parents=[info_common],
+                                        help="an experience now: <machine>:<name>")
+    info_exp.add_argument("ref")
+    info_exp.add_argument("--log", type=int, default=15, help="log lines (0: none)")
+    info_machine = info_commands.add_parser("machine", parents=[info_common],
+                                            help="resources and useml health")
+    info_machine.add_argument("ref")
+    commands.add_parser("mcp", help="an MCP server (stdio) giving AI assistants the info views")
 
     monitor_parser = commands.add_parser("monitor", help="the private dashboard and its agent")
     monitor_commands = monitor_parser.add_subparsers(dest="monitor_command", required=True)
@@ -790,6 +864,12 @@ def main(argv=None) -> int:
         return _monitor(args)
     if args.command == "project":
         return _project(args)
+    if args.command == "info":
+        return _info(args)
+    if args.command == "mcp":
+        from .mcp import serve
+
+        return serve()
     if args.command == "settings":
         return _settings(args)
     if args.command == "config":

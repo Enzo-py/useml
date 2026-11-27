@@ -1129,7 +1129,13 @@ function liveRuns(name) {
 }
 function pageRuns() {
   if (!projectPage) return [];
-  const kept = projectPage.runs.map((r) => ({...r, key: r.id}));
+  // One row per (experience, declaration): identical repeats are counted ("×3").
+  const groups = new Map();
+  for (const r of [...projectPage.runs].sort((a, b) => (a.ended || 0) - (b.ended || 0))) {
+    const id = `${r.experience}|${r.run || r.id}`;
+    groups.set(id, {...r, key: r.id, times: (groups.get(id)?.times || 0) + 1});
+  }
+  const kept = [...groups.values()].sort((a, b) => (b.ended || 0) - (a.ended || 0));
   return [...liveRuns(projectPage.project.name), ...kept];
 }
 function runningSection(runs) {
@@ -1149,11 +1155,33 @@ function resultKeys(runs) {
   return [...keys].sort((a, b) => (a.endsWith(".last") - b.endsWith(".last")) || a.localeCompare(b));
 }
 function lowerIsBetter(key) { return LOWER_BETTER.test(key.split(".").slice(-2).join(".")) !== !!flipped[key]; }
+// The same rules as useml.projects: plumbing is not a factor; the main result is the one
+// the method declares (`result = …`), else a quality measure, never a count or a label.
+const PLUMBING_KEY = /(fingerprint|checksum|digest|hash|_?path|_?dir|_?file|_?root|_?url|_?folder|cache)$/i;
+const PLUMBING_VALUE = /^(?:[\/~]|<(?:project|useml|data|datasets|redacted)>|[0-9a-f]{12,}$|[a-z]+:\/\/)/i;
+const MEASURE = /(acc|accuracy|f1|auc|auroc|map\b|mrr|hits|ndcg|bleu|rouge|meteor|score|r2|corr|pearson|spearman|precision|recall|iou|dice|loss|error|perplexity|ppl|wer|cer|fid|rmse|mae|mse|reward|win)/i;
+const COUNT = /(^|[._\/])(n|num|count|size|total|len|samples?|items?|rows?|version|seed|id|epoch|epochs|step|steps|index|year)([._]|$)|(^|[._\/])n_\w+$|_version$|_count$/i;
+function isPlumbing(key, value) {
+  return PLUMBING_KEY.test(key.split(".").pop()) || (typeof value === "string" && PLUMBING_VALUE.test(value));
+}
+function guessMain(runs) {
+  const all = runs.flatMap((r) => Object.keys(r.results || {}));
+  if (!all.length) return null;
+  const count = {};
+  for (const k of all) count[k] = (count[k] || 0) + 1;
+  const rank = (k) => {
+    const leaf = (k.endsWith(".last") || k.endsWith(".best") ? k.slice(0, -5) : k).split(".").pop();
+    return [COUNT.test(leaf) ? 1 : 0, MEASURE.test(leaf) ? 0 : 1, -count[k], k.endsWith(".last") ? 1 : 0, k];
+  };
+  return Object.keys(count).sort((a, b) => { const x = rank(a), y = rank(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; })[0];
+}
 function primaryOf(project, runs) {
   const keys = resultKeys(runs);
   const chosen = primaries[project.name];
   if (chosen && keys.includes(chosen)) return chosen;
-  return keys.find((k) => !k.endsWith(".last")) || keys[0] || null;
+  const declared = view.kind === "method" ? (project.methods || {})[view.method]?.result : null;
+  if (declared && keys.includes(declared)) return declared;
+  return guessMain(runs.filter((r) => !r.live));
 }
 function best(runs, key) {
   const values = runs.map((r) => r.results?.[key]).filter((v) => typeof v === "number");
@@ -1162,7 +1190,7 @@ function best(runs, key) {
 }
 function varying(runs) {
   const keys = new Set();
-  for (const run of runs) for (const key of Object.keys(run.factors || {})) keys.add(key);
+  for (const run of runs) for (const [key, value] of Object.entries(run.factors || {})) if (!isPlumbing(key, value)) keys.add(key);
   const vary = [], fixed = [];
   for (const key of [...keys].sort()) {
     const values = new Set(runs.map((r) => JSON.stringify(r.factors?.[key] ?? null)));
@@ -1312,7 +1340,8 @@ function renderProject(root) {
       const mine = runs.filter((r) => (r.method || "(unassigned)") === name);
       const kept = mine.filter((r) => !r.live);
       const versions = new Set(kept.map((r) => r.version)).size;
-      const top = primary ? best(kept, primary) : null;
+      const own = declared.result && kept.some((r) => declared.result in (r.results || {})) ? declared.result : guessMain(kept);
+      const top = own ? best(kept, own) : null;
       const running = mine.filter((r) => r.status === "running").length;
       const last = Math.max(0, ...kept.map((r) => r.ended || 0));
       return el("article", {class: `card method${name === project.focus ? " is-focus" : ""}`, tabindex: "0",
@@ -1324,7 +1353,7 @@ function renderProject(root) {
         el("div", {class: "method-stats"},
           el("div", {}, el("b", {}, kept.length), el("span", {}, "runs")),
           el("div", {}, el("b", {}, versions), el("span", {}, "versions")),
-          el("div", {}, el("b", {}, top === null ? "—" : number(top)), el("span", {class: "ellipsis", title: primary || ""}, primary ? `best ${primary}` : "best")),
+          el("div", {}, el("b", {}, top === null ? "—" : number(top)), el("span", {class: "ellipsis", title: own || ""}, own ? `best ${own}` : "best")),
           running ? el("div", {}, el("b", {style: {color: "var(--run)"}}, running), el("span", {}, "running")) : null),
         last ? el("div", {class: "tiny faint"}, `last run ${ago(Date.now() / 1000 - last)}`) : el("div", {class: "tiny faint"}, "no run kept yet"));
     }))));
@@ -1439,7 +1468,7 @@ function ablationSection(project, runs, {scope}) {
   const body = sorted.map((run) => {
     const cells = [el("td", {}, run.live ? null : el("input", {type: "radio", name: "reference", checked: run.key === mapState.reference ? "checked" : null,
         "aria-label": "Use as reference", onclick: (e) => { e.stopPropagation(); mapState.reference = mapState.reference === run.key ? null : run.key; renderProjectsView(); }})),
-      el("td", {}, el("div", {}, run.experience), el("div", {class: "sub"}, run.live ? `${run.machine} · now` : `${run.machine || ""}${run.ended ? ` · ${ago(Date.now() / 1000 - run.ended)}` : ""}`)),
+      el("td", {}, el("div", {}, run.experience, run.times > 1 ? el("span", {class: "faint small"}, ` ×${run.times}`) : null), el("div", {class: "sub"}, run.live ? `${run.machine} · now` : `${run.machine || ""}${run.ended ? ` · ${ago(Date.now() / 1000 - run.ended)}` : ""}`)),
       el("td", {}, pill(run.status))];
     for (const key of shownResults) {
       const value = run.results?.[key];

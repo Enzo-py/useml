@@ -48,7 +48,10 @@ and gives the command that names it everywhere:
 useml settings set monitor.label 'GPU server'
 ```
 
-`label` is only the name shown; `machine` stays the machine's identifier. A machine that
+`label` is only the name shown; `machine` stays the machine's identifier. Without
+`machine`, the identifier is a hash of the computer's hardware id (the platform UUID on
+macOS, /etc/machine-id on Linux): it does not change with the network, and reveals
+nothing. A machine that
 was shut down for good can be removed with **Forget** (it only leaves the dashboard's
 memory; a running agent comes back).
 

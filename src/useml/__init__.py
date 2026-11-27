@@ -35,7 +35,7 @@ __all__ = ["paths", "hub", "store", "data", "datasets", "config", "exp", "monito
 def __getattr__(name):
     """`useml.data` and `useml.config` are imported on first use: they need numpy / PyYAML,
     `import useml` does not."""
-    if name in ("data", "datasets", "config", "exp", "monitor", "projects"):
+    if name in ("data", "datasets", "config", "exp", "monitor", "projects", "info"):
         import importlib
 
         return importlib.import_module(f".{name}", __name__)

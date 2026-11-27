@@ -25,6 +25,7 @@ package (`useml docs <topic>`):
   · [Experiences](src/useml/docs/exp.md)
 - [Monitor: a private dashboard reachable from anywhere](src/useml/docs/monitor.md)
 - [Projects: methods, datasets, every run kept](src/useml/docs/projects.md)
+- [Info and MCP: runs and projects in few tokens, for you or an AI assistant](src/useml/docs/info.md)
 - [Troubleshooting](src/useml/docs/troubleshooting.md) · [Reference](src/useml/docs/reference.md)
   · [FAQ](src/useml/docs/faq.md)
 - [Instructions for AI coding assistants](src/useml/docs/SKILL.md)
@@ -245,6 +246,14 @@ datasets) and its results, never its code. `useml project export` writes them as
 Markdown; the dashboard keeps them in a private dataset and shows, per method, the code
 versions, an ablation map, correlations between factors and results, and curves side by
 side. See [projects](src/useml/docs/projects.md).
+
+### Ask an AI assistant without pasting anything
+
+```bash
+useml info                          # machines, what runs, what failed, projects (~300 tokens)
+useml info project robust-vision -m wide    # a method's runs: results, factors that differ
+claude mcp add useml -- useml mcp   # the same as read-only tools for Claude Code (MCP)
+```
 
 ### Runs that survive, crashes that explain themselves
 

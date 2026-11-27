@@ -127,6 +127,12 @@ older useml (projects need 1.3, curves read from tqdm and printed lines need 1.4
 group `projects` not shared, or experiences that belong to no declared project
 (`useml project init` in the repository they run from).
 
+## Asking about it in a few words
+
+`useml info project <name>` (and `-m <method>`) gives the same in text, short enough for
+an AI assistant: [info.md](info.md). A method's main result can be declared:
+`useml project method set wide --result evaluate.accuracy`.
+
 ## Where the history is kept
 
 A record never holds code: names (`module:function`), numbers, curves (at most 120 points

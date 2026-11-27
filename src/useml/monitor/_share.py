@@ -80,9 +80,40 @@ def settings() -> dict:
     }
 
 
+def machine_id() -> str:
+    """An identifier of this computer that survives network changes and reboots: the
+    platform UUID (macOS), /etc/machine-id (Linux), the MachineGuid (Windows); else the
+    hostname without its domain (macOS adds `.local` on some networks)."""
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform == "darwin":
+            out = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                                 capture_output=True, text=True, timeout=5).stdout
+            found = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', out)
+            if found:
+                return found.group(1)
+        for path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+            if os.path.isfile(path):
+                text = open(path).read().strip()
+                if text:
+                    return text
+        if sys.platform == "win32":
+            import winreg
+
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                r"SOFTWARE\Microsoft\Cryptography") as key:
+                return str(winreg.QueryValueEx(key, "MachineGuid")[0])
+    except Exception:                                            # noqa: BLE001
+        pass
+    return platform.node().split(".")[0].lower()
+
+
 def default_alias() -> str:
-    """A stable name that does not reveal the hostname."""
-    return "machine-" + hashlib.sha256(platform.node().encode()).hexdigest()[:6]
+    """A stable name that reveals nothing: a hash of `machine_id()` (never sent as is).
+    `[monitor] machine` replaces it."""
+    return "machine-" + hashlib.sha256(f"useml|{machine_id()}".encode()).hexdigest()[:6]
 
 
 def wanted(name: str, patterns: list) -> bool:

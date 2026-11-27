@@ -47,6 +47,18 @@ import time
 from pathlib import Path
 
 FORMAT = "useml-run/1"
+#: Not a choice but plumbing: where a thing is and how to check it (`…fingerprint`, `…_path`).
+PLUMBING_KEY = re.compile(r"(fingerprint|checksum|digest|hash|_?path|_?dir|_?file|_?root|"
+                          r"_?url|_?folder|cache)$", re.I)
+PLUMBING_VALUE = re.compile(r"^(?:[/~]|<(?:project|useml|data|datasets|redacted)>|[0-9a-f]{12,}$|"
+                            r"[a-z]+://)", re.I)
+#: Names of quality measures, and of counts — to pick the result a project is ranked by.
+MEASURE = re.compile(r"(acc|accuracy|f1|auc|auroc|map\b|mrr|hits|ndcg|bleu|rouge|meteor|"
+                     r"score|r2|corr|pearson|spearman|precision|recall|iou|dice|loss|error|"
+                     r"perplexity|ppl|wer|cer|fid|rmse|mae|mse|reward|win)", re.I)
+COUNT = re.compile(r"(^|[._/])(n|num|count|size|total|len|samples?|items?|rows?|version|"
+                   r"seed|id|epoch|epochs|step|steps|index|year)([._]|$)|(^|[._/])n_\w+$|"
+                   r"_version$|_count$", re.I)
 MAX_CURVE_POINTS = 120
 MAX_FACTOR_TEXT = 120
 LOWER_IS_BETTER = re.compile(r"(loss|error|err\b|perplexity|ppl|mse|mae|rmse|wer|cer|fid|"
@@ -69,7 +81,8 @@ def declared(start=None) -> dict | None:
         entry = entry or {}
         methods[str(method)] = {"description": str(entry.get("description", "")),
                                 "status": str(entry.get("status", "")),
-                                "experiences": [str(g) for g in entry.get("experiences", [])]}
+                                "experiences": [str(g) for g in entry.get("experiences", [])],
+                                "result": str(entry["result"]) if entry.get("result") else None}
     return {"name": name, "description": str(table.get("description", "")),
             "focus": str(table["focus"]) if table.get("focus") else None,
             "datasets": [str(d) for d in table.get("datasets", [])],
@@ -128,8 +141,33 @@ def _flatten(prefix: str, value, out: dict) -> None:
         out[prefix] = value
 
 
+def is_plumbing(key: str, value) -> bool:
+    """A path, a fingerprint or a hash: where things are, not a choice of the run."""
+    leaf = key.rsplit(".", 1)[-1]
+    return bool(PLUMBING_KEY.search(leaf)) or \
+        (isinstance(value, str) and bool(PLUMBING_VALUE.match(value)))
+
+
+def main_result(keys) -> str | None:
+    """The result to rank runs by, from every run's result keys (repeated per run) — when
+    the method declares none (`result = …`): never a count or a label (`n_test`,
+    `runner_version`); a quality measure (accuracy, f1, loss…) first; then the one most runs
+    have; then a curve's best value rather than its last."""
+    keys = list(keys)
+    if not keys:
+        return None
+
+    def rank(key):
+        base = key[:-5] if key.endswith((".last", ".best")) else key
+        leaf = base.rsplit(".", 1)[-1]
+        return (bool(COUNT.search(leaf)), not MEASURE.search(leaf), -keys.count(key),
+                key.endswith(".last"), key)
+    return min(set(keys), key=rank)
+
+
 def factors(spec: dict) -> dict:
-    """{dotted key: plain value}: every choice the declaration makes."""
+    """{dotted key: plain value}: every choice the declaration makes (paths, fingerprints
+    and hashes are left out: they say where things are, not what was chosen)."""
     out: dict = {}
     for step in spec.get("steps", []):
         names = step.get("arg_names") or []
@@ -140,7 +178,7 @@ def factors(spec: dict) -> dict:
             _flatten(f"{step['name']}.{key}", value, out)
     for key, value in (spec.get("tags") or {}).items():
         _flatten(f"tag.{key}", value, out)
-    return out
+    return {key: value for key, value in out.items() if not is_plumbing(key, value)}
 
 
 def _numbers(prefix: str, value, out: dict, depth: int = 0) -> None:
@@ -423,7 +461,8 @@ def set_field(field: str, value, start=None) -> Path:
 
 
 def add_method(name: str, *, description: str = "", status: str = "",
-               experiences: list | None = None, start=None) -> Path:
+               experiences: list | None = None, result: str | None = None,
+               start=None) -> Path:
     from ._settings import edit_file
 
     _check_name(name, "method")
@@ -437,11 +476,14 @@ def add_method(name: str, *, description: str = "", status: str = "",
         edit_file(path, table, "status", status)
     if experiences:
         edit_file(path, table, "experiences", list(experiences))
+    if result:
+        edit_file(path, table, "result", result)
     return path
 
 
 def set_method(name: str, *, description: str | None = None, status: str | None = None,
-               experiences: list | None = None, start=None) -> Path:
+               experiences: list | None = None, result: str | None = None,
+               start=None) -> Path:
     """Change what is given; an empty status or list removes the key."""
     from ._settings import edit_file
 
@@ -456,6 +498,8 @@ def set_method(name: str, *, description: str | None = None, status: str | None 
         edit_file(path, table, "status", status or None, remove=not status)
     if experiences is not None:
         edit_file(path, table, "experiences", list(experiences) or None, remove=not experiences)
+    if result is not None:
+        edit_file(path, table, "result", result or None, remove=not result)
     return path
 
 
@@ -639,7 +683,7 @@ def to_markdown(project: dict, records: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-__all__ = ["project_file", "set_field", "add_method", "set_method", "remove_method",
+__all__ = ["is_plumbing", "main_result", "project_file", "set_field", "add_method", "set_method", "remove_method",
            "set_datasets", "propose", "proposal_text", "init", "ProjectError",
            "declared", "method_of", "factors", "results", "curves", "record", "runs",
            "run_id", "summary", "to_markdown", "ENDED", "LOWER_IS_BETTER"]

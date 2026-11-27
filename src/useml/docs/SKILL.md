@@ -16,6 +16,10 @@ useml docs exp          # print one guide: quickstart, adopt, paths-and-hub, sto
 
 ## First steps in a project
 
+0. To know what runs, what failed and what each attempt gave, read `useml info` first
+   (or the `useml_overview` MCP tool), then `useml info project <name> -m <method>`,
+   `useml info run <id>`, `useml info exp <machine>:<name>`: short, read only, from every
+   machine. Ask the user for context only when these do not answer.
 0. A project's methods, datasets and focus live in `[project]` of useml.toml
    (`useml docs projects`): start it with `useml project init` (show its proposal before
    `--yes`), change it with `useml project method add|set|rm`, `focus`, `dataset add|rm`
