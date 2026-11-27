@@ -43,6 +43,7 @@ TOOLS = [
          "result": {"type": "string", "description": "the result key to rank runs by"},
          "limit": {"type": "integer", "description": "rows of the runs table (default 25)"},
          "factors": {"type": "integer", "description": "factor columns (default 10)"},
+         "family": {"type": "string", "description": "with method: the family of runs (first part of their names under the method)"},
          "local": {"type": "boolean"}}}},
     {"name": "useml_run",
      "description": "One finished run: its factors, results, curves (first → last, best), "
@@ -81,7 +82,8 @@ def call(name: str, arguments: dict) -> str:
         return info.project(src, arguments["name"], method=arguments.get("method"),
                             result=arguments.get("result"),
                             limit=int(arguments.get("limit") or 25),
-                            max_factors=int(arguments.get("factors") or 10))
+                            max_factors=int(arguments.get("factors") or 10),
+                            family_name=arguments.get("family"))
     if name == "useml_run":
         return info.run(src, arguments["ref"], project_name=arguments.get("project"),
                         code=bool(arguments.get("code")), configs=bool(arguments.get("configs")))

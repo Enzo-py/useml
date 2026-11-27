@@ -249,6 +249,7 @@
   .map th, .map td { padding: 7px 10px; white-space: nowrap; }
   .map th.sortable { cursor: pointer; }
   .map th.result-col { text-align: right; }
+  .map table.ablation th { white-space: normal; min-width: 72px; max-width: 160px; vertical-align: bottom; line-height: 1.25; word-break: normal; overflow-wrap: normal; }
   .map td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .map td.best { font-weight: 700; }
   .map .group-end { border-right: 2px solid var(--line); }
@@ -1229,7 +1230,12 @@ function varying(runs) {
   for (const run of runs) for (const [key, value] of Object.entries(run.factors || {})) if (!isPlumbing(key, value)) keys.add(key);
   const vary = [], fixed = [];
   for (const key of [...keys].sort()) {
-    const values = new Set(runs.map((r) => JSON.stringify(r.factors?.[key] ?? null)));
+    // Compared among the runs that have this factor's step: a run without the step at all
+    // (another kind of experience) says nothing; a run with the step but not the factor
+    // used its default — "—", a value like another.
+    const step = key.split(".")[0] + ".";
+    const values = new Set(runs.filter((r) => Object.keys(r.factors || {}).some((k) => k.startsWith(step)))
+      .map((r) => JSON.stringify(r.factors?.[key] ?? null)));
     (values.size > 1 ? vary : fixed).push(key);
   }
   return {vary, fixed};
@@ -1441,7 +1447,7 @@ function renderProject(root) {
       el("div", {class: "card dataset"}, el("b", {}, name), el("span", {class: "small muted"},
         info.runs ? `${info.runs} runs · ${[...info.methods].join(", ")}` : "declared, no run yet"))))
       : el("div", {class: "card empty-now"}, "No dataset declared or read yet.")));
-  out.push(ablationSection(project, runs, {scope: "project"}));
+  out.push(latestRunsSection(project, runs));
   root.replaceChildren(...out.filter(Boolean));
 }
 function renderMethod(root) {
@@ -1455,7 +1461,7 @@ function renderMethod(root) {
        view.method === project.focus ? el("span", {class: "focus-tag"}, "focus") : null,
        declared.status ? el("span", {class: "chip-note"}, declared.status) : null),
     declared.description ? el("p", {class: "lead"}, declared.description) : null,
-    el("div", {class: "toolbar"}, primarySelect(project, all), el("div", {class: "spacer"}),
+    el("div", {class: "toolbar"}, primarySelect(project, runs), el("div", {class: "spacer"}),
       view.method !== project.focus && view.method !== "(unassigned)" ? el("button", {class: "btn small", onclick: () =>
         toast(`To work on “${view.method}”, run in the repository:`, `useml project focus ${view.method}`)}, "Set as focus") : null)];
   if (!runs.length) out.push(el("div", {class: "card empty-now"}, "No run of this method yet. ",
@@ -1573,10 +1579,80 @@ function versionsSection(project, runs) {
     el("div", {class: "card block versions"}, items.reverse()));
 }
 
-function ablationSection(project, runs, {scope}) {
-  const withMethod = scope === "project" ? runs.map((r) => ({...r, factors: {method: r.method || "(unassigned)", ...r.factors}})) : runs;
-  const {vary, fixed} = varying(withMethod);
-  const primary = primaryOf(project, runs);
+const MAX_FACTORS = 8;
+function family(run) {
+  // The first part of the name under the method: "v2/w8" → "v2"; a name alone → "·".
+  const parts = shortName(run.experience).split("/");
+  return parts.length > 1 ? parts[0] : "·";
+}
+function shortKey(key) {
+  // The end of a long dotted key; the whole key is in the title.
+  const parts = key.split(".");
+  return parts.length > 2 ? `…${parts.slice(-2).join(".")}` : key;
+}
+function breakable(text) {
+  // Headers wrap after . / _ only, never inside a word.
+  return text.replace(/([./_])/g, "$1\u200b");
+}
+function cell(value) {
+  const text = show(value);
+  return text.length > 24 ? el("span", {title: text}, `${text.slice(0, 23)}…`) : text;
+}
+function latestRunsSection(project, runs) {
+  const kept = runs.filter((r) => !r.live).sort((a, b) => (b.ended || 0) - (a.ended || 0)).slice(0, 10);
+  if (!kept.length) return null;
+  const mains = {};
+  const mainOf = (m) => mains[m] ??= ((project.methods || {})[m]?.result || guessMain(runs.filter((r) => !r.live && (r.method || "(unassigned)") === m)));
+  return el("section", {}, el("h2", {}, "Latest runs ", el("span", {class: "count"}, "open a method for its ablation map")),
+    el("div", {class: "card table-wrap map"}, el("table", {}, el("tbody", {}, kept.map((run) => {
+      const m = run.method || "(unassigned)", main = mainOf(m), value = run.results?.[main];
+      return el("tr", {onclick: () => go(`#/run/${encodeURIComponent(project.name)}/${run.id}`)},
+        el("td", {}, el("div", {}, run.experience, run.times > 1 ? el("span", {class: "faint small"}, ` ×${run.times}`) : null),
+           el("div", {class: "sub"}, `${m} · ${run.machine || ""}`)),
+        el("td", {}, pill(run.status)),
+        el("td", {class: "num", title: main || ""}, typeof value === "number" ? `${shortKey(main)} ${number(value)}` : ""),
+        el("td", {class: "muted small"}, run.ended ? ago(Date.now() / 1000 - run.ended) : ""));
+    })))));
+}
+function ablationSection(project, allRuns, {scope}) {
+  // Families: runs of one method that share nothing (other datasets, other protocols) are
+  // compared within their family only.
+  const families = {};
+  for (const run of allRuns) (families[family(run)] ||= []).push(run);
+  const names = Object.keys(families).sort((a, b) =>
+    Math.max(...families[b].map((r) => r.ended || 0)) - Math.max(...families[a].map((r) => r.ended || 0)));
+  const key = `${project.name}/${view.method}`;
+  mapState.family ||= {};
+  if (!names.includes(mapState.family[key])) {
+    mapState.family[key] = names.find((n) => families[n].some((r) => Object.keys(r.results || {}).length)) || names[0];
+  }
+  const current = mapState.family[key];
+  const runs = names.length > 1 ? families[current] : allRuns;
+  const withMethod = runs;
+  const all = varying(withMethod);
+  const fixed = all.fixed;
+  // At most MAX_FACTORS columns: the factors most runs have, with the fewest distinct values.
+  const coverage = (k) => withMethod.filter((r) => r.factors?.[k] !== undefined && r.factors?.[k] !== null).length;
+  const distinct = (k) => new Set(withMethod.map((r) => JSON.stringify(r.factors?.[k] ?? null))).size;
+  // Real changes first (two runs set different values), then a value set or left out.
+  const real = (k) => new Set(withMethod.filter((r) => r.factors?.[k] !== undefined && r.factors?.[k] !== null)
+    .map((r) => JSON.stringify(r.factors[k]))).size > 1 ? 0 : 1;
+  const ranked = [...all.vary].sort((a, b) => real(a) - real(b) || coverage(b) - coverage(a) || distinct(a) - distinct(b) || a.localeCompare(b));
+  // Columns that always hold the same values as another are one column ("+1 same").
+  const twins = {};
+  const unique = [];
+  for (const k of ranked) {
+    const signature = JSON.stringify(withMethod.map((r) => r.factors?.[k] ?? null));
+    const first = unique.find((u) => u.signature === signature);
+    if (first) (twins[first.key] ||= []).push(k); else unique.push({key: k, signature});
+  }
+  const distinctRanked = unique.map((u) => u.key);
+  const realOnes = distinctRanked.filter((k) => real(k) === 0);
+  const vary = (mapState.allFactors ? distinctRanked : (realOnes.length ? realOnes : distinctRanked).slice(0, MAX_FACTORS)).sort();
+  const hiddenFactors = all.vary.length - vary.length;
+  // The method's main result when this family has it, else the family's own.
+  const methodMain = primaryOf(project, allRuns);
+  const primary = runs.some((r) => typeof r.results?.[methodMain] === "number") ? methodMain : primaryOf(project, runs);
   let results = resultKeys(withMethod);
   if (primary) results = [primary, ...results.filter((k) => k !== primary)];
   const shownResults = mapState.all ? results : results.slice(0, 3);
@@ -1602,10 +1678,12 @@ function ablationSection(project, runs, {scope}) {
   const sortBy = (key) => { mapState.desc = mapState.sort === key ? !mapState.desc : true; mapState.sort = key; renderProjectsView(); };
   const head = el("tr", {}, el("th", {title: "Reference: the other rows show what differs from it"}, "ref"), el("th", {}, "Run"), el("th", {}, "Status"),
     shownResults.map((k, i) => el("th", {class: `result-col sortable${i === shownResults.length - 1 ? " group-end" : ""}`, title: `result ${k} — ${lowerIsBetter(k) ? "lower" : "higher"} is better`},
-      el("span", {onclick: () => sortBy(`r:${k}`)}, k),
+      el("span", {onclick: () => sortBy(`r:${k}`)}, breakable(shortKey(k))),
       el("button", {class: "dir", title: "Switch: lower / higher is better", onclick: (e) => { e.stopPropagation(); flipped[k] = !flipped[k]; prefs.set("flipped", flipped); renderProjectsView(); }},
          lowerIsBetter(k) ? "↓" : "↑"))),
-    vary.map((k) => el("th", {class: "factor-col sortable", onclick: () => sortBy(`f:${k}`), title: `factor ${k}`}, k)),
+    vary.map((k) => el("th", {class: "factor-col sortable", onclick: () => sortBy(`f:${k}`),
+      title: `factor ${k}${twins[k] ? `\nsame values: ${twins[k].join(", ")}` : ""}`},
+      breakable(shortKey(k)), twins[k] ? el("div", {class: "faint tiny"}, `+${twins[k].length} same`) : null)),
     el("th", {class: "hide-sm"}, "Version"));
   const body = sorted.map((run) => {
     const cells = [el("td", {}, run.live ? null : el("input", {type: "radio", name: "reference", checked: run.key === mapState.reference ? "checked" : null,
@@ -1629,21 +1707,31 @@ function ablationSection(project, runs, {scope}) {
     for (const key of vary) {
       const value = run.factors?.[key];
       const differs = reference && reference !== run && JSON.stringify(value ?? null) !== JSON.stringify(reference.factors?.[key] ?? null);
-      cells.push(el("td", {class: `factor${differs ? " differs" : ""}`}, show(value)));
+      cells.push(el("td", {class: `factor${differs ? " differs" : ""}`}, cell(value)));
     }
     cells.push(el("td", {class: "hide-sm mono small"}, run.version ? `v${run.version}` : ""));
     return el("tr", {class: run.key === mapState.reference ? "is-ref" : "", onclick: () => run.live ? go(`#/exp/${encodeURIComponent(run.alias)}/${encodeURIComponent(run.experience)}`)
       : go(`#/run/${encodeURIComponent(project.name)}/${run.id}`)}, cells);
   });
-  const fixedText = fixed.slice(0, 12).map((k) => `${k} = ${show(withMethod.find((r) => r.factors && k in r.factors)?.factors[k])}`).join(" · ");
+  const fixedText = fixed.filter((k) => !isPlumbing(k, null)).slice(0, 12).map((k) => `${shortKey(k)} = ${show(withMethod.find((r) => r.factors && k in r.factors)?.factors[k])}`).join(" · ");
+  const chips = names.length > 1 ? el("div", {class: "toolbar"}, el("span", {class: "small muted"}, "family"),
+    el("div", {class: "chips"}, names.map((n) => el("button", {class: `chip${n === current ? " on" : ""}`, title: `runs named ${view.method}/${n}/…`,
+      onclick: () => { mapState.family[key] = n; mapState.sort = null; mapState.reference = null; mapState.cell = null; renderProjectsView(); }},
+      `${n} · ${families[n].length}`)))) : null;
+  const noResults = !runs.some((r) => Object.keys(r.results || {}).some(trusted));
   const section = el("section", {},
-    el("h2", {}, scope === "project" ? "Ablation map · every run" : "Ablation map", el("span", {class: "count"}, "a row per run, a column per factor that changes, then the results")),
+    el("h2", {}, "Ablation map", el("span", {class: "count"}, "a row per run: its results, then the factors that change")),
+    chips,
+    noResults ? el("div", {class: "small muted", style: {marginBottom: "8px"}}, "These runs report no number (data preparation?): only their settings are compared.") : null,
     el("div", {class: "card table-wrap map"},
       el("table", {class: "ablation"}, el("thead", {}, head), el("tbody", {}, body))),
     el("div", {class: "map-notes small muted"},
       fixed.length ? el("div", {}, el("b", {}, "Same in every run: "), fixedText, fixed.length > 12 ? ` … (+${fixed.length - 12})` : "") : null,
-      results.length > 3 ? el("button", {class: "btn small ghost", onclick: () => { mapState.all = !mapState.all; renderProjectsView(); }},
-        mapState.all ? "Fewer results" : `All ${results.length} results`) : null,
+      el("div", {class: "actions"},
+        results.length > 3 ? el("button", {class: "btn small ghost", onclick: () => { mapState.all = !mapState.all; renderProjectsView(); }},
+          mapState.all ? "Fewer results" : `All ${results.length} results`) : null,
+        hiddenFactors > 0 || mapState.allFactors ? el("button", {class: "btn small ghost", onclick: () => { mapState.allFactors = !mapState.allFactors; renderProjectsView(); }},
+          mapState.allFactors ? `The ${MAX_FACTORS} main factors` : `${hiddenFactors} more factors`) : null),
       el("div", {}, "Pick a reference (ref) to see what each run changes. Green: better, red: worse, within each column. Click a row for the run.")));
   const correlations = correlationSection(withMethod, vary, shownResults);
   return el("div", {class: "stack"}, section, correlations);

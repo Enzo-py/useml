@@ -108,9 +108,15 @@ dashboard keeps them. The **Projects** tab shows:
   of the same version ran the same code and differ only by their factors. The page says
   which step's code changed from one version to the next, and the git commit (`*` when
   there were uncommitted changes);
-- **the ablation map**: a row per run, the results first (green: better, red: worse,
+- **the ablation map**, on a method's page: a row per run. Runs whose names differ by
+  their first part under the method (`v2/…`, `sweep/…`) are **families**, compared
+  apart (chips to switch): they rarely share results or settings. The results come first
+  (green: better, red: worse, (green: better, red: worse,
   within each column; ↑ or ↓ says which way is better, click to switch), then the factors
-  that change between runs. The factors that never change are listed once below. Choose
+  that change: at most 8 columns, those where two runs set different values first (a
+  setting present in some runs only is behind "N more factors"), identical columns merged,
+  long names shortened (the whole name on hover). The factors that never change are listed
+  once below. Choose
   a reference run (the `ref` column) and every other row highlights what it changed;
 - **correlations**: for each factor and each result, `r` (from −1 to +1) for numbers —
   green when more of the factor goes with a better result — and `η` (from 0 to 1) for

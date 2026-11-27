@@ -485,8 +485,15 @@ def evolution(runs: list[dict], main: str, *, prefix: str = "") -> list[str]:
     return lines
 
 
+def family(experience: str, method: str) -> str:
+    """The first part of a name under its method: `wide/v2/w8` → `v2`; a name alone → `·`."""
+    short = experience[len(method) + 1:] if experience.startswith(f"{method}/") else experience
+    parts = short.split("/")
+    return parts[0] if len(parts) > 1 else "·"
+
+
 def project(src, name: str, *, method: str | None = None, result: str | None = None,
-            limit: int = 25, max_factors: int = 10) -> str:
+            limit: int = 25, max_factors: int = 10, family_name: str | None = None) -> str:
     """Without `method`: the summary (methods, running, latest runs). With it: the method's
     runs table (its own factors), links between factors and results, versions."""
     page = src.project(name)
@@ -548,6 +555,19 @@ def project(src, name: str, *, method: str | None = None, result: str | None = N
         lines.append("RUNS KEPT: none yet")
         return "\n".join(lines)
     distinct = _distinct(kept)
+    if method:
+        # Families: runs of one method that share nothing are compared within their family.
+        families: dict = {}
+        for run in distinct:
+            families.setdefault(family(run["experience"], method), []).append(run)
+        if len(families) > 1:
+            order = sorted(families, key=lambda f: -max(r.get("ended") or 0 for r in families[f]))
+            chosen = family_name if family_name in families else next(
+                (f for f in order if any(r.get("results") for r in families[f])), order[0])
+            lines.append("FAMILIES: " + " · ".join(f"{f} ({len(families[f])})" for f in order)
+                         + f" — showing {chosen}; --family <name> for another")
+            distinct = families[chosen]
+            kept = [r for r in kept if family(r["experience"], method) == chosen]
     if not method:
         recent = sorted(distinct, key=lambda r: r.get("ended") or 0, reverse=True)[:8]
         lines.append(f"LATEST RUNS ({len(distinct)} distinct)")
@@ -562,16 +582,26 @@ def project(src, name: str, *, method: str | None = None, result: str | None = N
         return "\n".join(lines)
     main = _main_result(kept, result or ((declared.get("methods") or {}).get(method) or {}).get("result"))
     keys = sorted({k for r in distinct for k in r["factors"]})
-    varying = [k for k in keys if len({json.dumps(r["factors"].get(k)) for r in distinct}) > 1]
+    def differs(key):
+        # Among the runs that have this factor's step (a run without the step is another
+        # kind of experience); a run with the step but not the factor used its default.
+        step = key.split(".")[0] + "."
+        having = [r for r in distinct if any(k.startswith(step) for k in r["factors"])]
+        return len({json.dumps(r["factors"].get(key)) for r in having}) > 1
+    varying = [k for k in keys if differs(k)]
     fixed = [k for k in keys if k not in varying]
     hidden = 0
     if len(varying) > max_factors:
         # Keep the factors with the fewest distinct values first: choices, not identifiers.
-        varying.sort(key=lambda k: (len({json.dumps(r["factors"].get(k)) for r in distinct}), k))
-        hidden, varying = len(varying) - max_factors, sorted(varying[:max_factors])
+        def real(k):    # two runs set different values (not only one leaving it out)
+            return len({json.dumps(r["factors"][k]) for r in distinct if r["factors"].get(k) is not None}) > 1
+        varying.sort(key=lambda k: (not real(k), -sum(1 for r in distinct if r["factors"].get(k) is not None),
+                                    len({json.dumps(r["factors"].get(k)) for r in distinct}), k))
+        real_ones = [k for k in varying if real(k)] or varying
+        hidden, varying = len(varying) - min(max_factors, len(real_ones)), sorted(real_ones[:max_factors])
     results = [main] if main else []
     from .projects import main_result
-    others = [k for k in sorted({k for r in distinct for k in (r.get("results") or {})} - set(results),
+    others = [k for k in sorted({k for r in distinct for k in _results(r)} - set(results),
                                 key=lambda k: (main_result([k]) != k, k.endswith(".last"), k))]
     results += others[:3]
     if main:
@@ -589,7 +619,8 @@ def project(src, name: str, *, method: str | None = None, result: str | None = N
         lines.append(f"  ({hidden} more factors differ; --factors {len(varying) + hidden} shows them)")
     lines.append("  id | run | status | " + " | ".join(results + varying) + " | version | ended")
     for run in distinct[:limit]:
-        cells = [run["id"][:8], run["experience"] + (f" ×{run['times']}" if run["times"] > 1 else ""), run["status"]]
+        short = run["experience"][len(method) + 1:] if run["experience"].startswith(f"{method}/") else run["experience"]
+        cells = [run["id"][:8], short + (f" ×{run['times']}" if run["times"] > 1 else ""), run["status"]]
         cells += [num(run["results"][k]) if isinstance((run.get("results") or {}).get(k), (int, float)) else "-" for k in results]
         cells += [value(run["factors"].get(k, "-")) for k in varying]
         cells += [f"v{run.get('version')}", ago(now - run["ended"]) if run.get("ended") else "?"]

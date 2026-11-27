@@ -422,7 +422,8 @@ def _info(args) -> int:
             return 0
         if command == "project":
             text = info.project(src, args.name, method=args.method, result=args.result,
-                                limit=args.limit, max_factors=args.factors)
+                                limit=args.limit, max_factors=args.factors,
+                                family_name=args.family)
         elif command == "run":
             text = info.run(src, args.ref, project_name=args.project, code=args.code,
                             configs=args.configs)
@@ -762,6 +763,7 @@ def build_parser() -> argparse.ArgumentParser:
     info_project = info_commands.add_parser("project", parents=[info_common],
                                             help="methods, running runs, runs, links")
     info_project.add_argument("--factors", type=int, default=10, help="factor columns shown")
+    info_project.add_argument("-f", "--family", help="with -m: the family of runs (first part of their names)")
     info_project.add_argument("name")
     info_project.add_argument("-m", "--method")
     info_project.add_argument("-r", "--result", help="the result runs are ranked by")

@@ -258,7 +258,8 @@ def test_resend_lets_the_dashboard_replace_a_record(project, monkeypatch):
     agent.push(full=True)
     kept = len(agent.sent)
     assert kept == 4
-    file = next(history.glob("projects/robust-vision/runs/*.json"))
+    file = next(f for f in sorted(history.glob("projects/robust-vision/runs/*.json"))
+                if json.loads(f.read_text())["experience"] == "wide/c")    # a run with results
     old = json.loads(file.read_text())
     old["results"] = {}                                   # as an older useml wrote it
     file.write_text(json.dumps(old))
@@ -266,3 +267,20 @@ def test_resend_lets_the_dashboard_replace_a_record(project, monkeypatch):
     assert monitor.resend() == kept
     agent.push(full=False)                                # sends them again
     assert json.loads(file.read_text())["results"]        # replaced with the full record
+
+
+def test_families_and_which_factors_differ(project):
+    with exp.experience("wide/v2/x", detach=False) as e:
+        e.step(steps.train_with_metrics, 6, name="train")
+        e.step(steps.summary, [1.0, 2.0], label="final", name="report")
+    with exp.experience("wide/v2/y", detach=False) as e:
+        e.step(steps.train_with_metrics, 6, name="train")
+        e.step(steps.summary, [1.0, 2.0], name="report")             # label left to its default
+    src = info.Local()
+    text = info.project(src, "robust-vision", method="wide")
+    assert "FAMILIES: v2 (2) · · (4) — showing v2" in text
+    table = text.split("id | run | status |")[1]
+    assert "report.label" in table.splitlines()[0]          # set in one, default in the other
+    assert "| v2/x |" in table and "| v2/y |" in table       # without the method, with the family
+    other = info.project(src, "robust-vision", method="wide", family_name="·")
+    assert "showing ·" in other and "train.steps" in other
