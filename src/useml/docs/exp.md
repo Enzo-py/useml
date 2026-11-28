@@ -149,6 +149,14 @@ A step that calls `ctx.metric` or `ctx.progress` itself keeps only what it repor
 notebook) also writes what it prints to `run.log`, so the dashboard and
 `useml exp log` show it.
 
+## A model's blocks
+
+When a step returns a PyTorch module (or holds some in a dict, list or attribute), useml
+writes `steps/<step>/architecture.json`: the tree of its blocks with their classes,
+parameter counts and dimensions, identical neighbours folded. The dashboard draws it in
+the method's schema; `useml info project <p> -m <method>` prints it. Class names go to
+the private dashboard with the run's record.
+
 ## On disk
 
 ```text

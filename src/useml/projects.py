@@ -355,6 +355,15 @@ def declaration_code(spec: dict, name: str, method: str | None = None) -> str:
     return "\n".join(head + ["", f"with exp.experience({', '.join(options)}) as e:", *lines]) + "\n"
 
 
+def _architecture(experience, step: dict) -> dict | None:
+    """The block tree of the model this step returned (see exp._architecture)."""
+    if not step.get("done"):
+        return None
+    from .exp._architecture import read
+
+    return read(experience.path(step["name"]))
+
+
 def step_wiring(spec: dict) -> dict:
     """{step: {"reads": the steps whose output it takes, "inputs": the data it loads}} —
     what a method's schema draws as arrows."""
@@ -417,7 +426,9 @@ def record(experience, project: dict | None = None, *, machine: str | None = Non
         "steps": [{"name": s["name"], "function": s["function"], "done": s["done"],
                    "seconds": s["seconds"], "code": code.get(s["name"]),
                    "reads": wiring.get(s["name"], {}).get("reads", []),
-                   "inputs": wiring.get(s["name"], {}).get("inputs", [])} for s in steps],
+                   "inputs": wiring.get(s["name"], {}).get("inputs", []),
+                   **({"architecture": arch} if (arch := _architecture(experience, s)) else {})}
+                  for s in steps],
         "declaration": declaration_code(spec, experience.name,
                                         method_of(experience.name, spec, project)),
         "factors": factors(spec), "results": {**results(experience), **summary},

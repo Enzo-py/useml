@@ -159,3 +159,26 @@ def assign_curve(steps: int, *, ctx):
     for step in range(steps):
         ctx.metric(step, assign=2.0 - step / steps, val_acc=step / steps)
     return {}
+
+
+try:                                                     # a small PyTorch model
+    from torch import nn as _nn
+
+    class TinyBlock(_nn.Module):
+        def __init__(self, norm: bool):
+            super().__init__()
+            self.norm = _nn.LayerNorm(8) if norm else _nn.Identity()
+            self.mlp = _nn.Sequential(_nn.Linear(8, 16), _nn.GELU(), _nn.Linear(16, 8))
+
+    class TinyNet(_nn.Module):
+        def __init__(self, depth: int, norm: bool):
+            super().__init__()
+            self.layers = _nn.ModuleList([TinyBlock(norm) for _ in range(depth)])
+            self.head = _nn.Linear(8, 2)
+except ImportError:                                      # pragma: no cover
+    pass
+
+
+def tiny_net(depth: int, norm: bool):
+    """A step returning a model: its blocks are recorded."""
+    return TinyNet(depth, norm)

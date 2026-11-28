@@ -610,6 +610,53 @@ def bench(src, name: str, benchmark: str, *, metrics: int = 6) -> str:
     return "\n".join(lines)
 
 
+def _params(n: int) -> str:
+    return f"{n / 1e9:.1f}B" if n >= 1e9 else f"{n / 1e6:.1f}M" if n >= 1e6 else \
+        f"{n / 1e3:.1f}K" if n >= 1e3 else str(n)
+
+
+def _arch_index(node: dict, path: str = "", out: dict | None = None) -> dict:
+    out = {} if out is None else out
+    out[path] = node
+    for child in node.get("children") or []:
+        name = re.sub(r"^\d+–\d+$", "*", child["name"])
+        _arch_index(child, f"{path}/{re.sub(r'….*$', '…', name)}", out)
+    return out
+
+
+def architecture(kept: list[dict], step: str, best: dict, *, depth: int = 3) -> list[str]:
+    """The model(s) a step returned, as an indented tree of blocks: `name Class ×n (params)
+    extra`; `*` marks a block that differs across runs (class, size, repeats, presence)."""
+    mine = next((s.get("architecture") for s in best.get("steps") or [] if s["name"] == step), None)
+    if not mine:
+        return []
+    others = [s.get("architecture") for r in kept for s in r.get("steps") or []
+              if s["name"] == step and s.get("architecture")]
+    lines = []
+    for name, tree in mine.items():
+        indexes = [_arch_index(o.get(name) or {"children": []}) for o in others]
+
+        def text(node):
+            return f"{node.get('class', '').split('.')[-1]}×{node.get('repeat', 1)} {node.get('extra', '')} {node.get('params')}"
+
+        def walk(node, path, level, label):
+            seen = {text(i[path]) if path in i else "absent" for i in indexes}
+            star = "*" if len(seen) > 1 else ""
+            extra = f" ({node['extra'][:60]})" if node.get("extra") else ""
+            lines.append(f"    {'  ' * level}{star}{label} {node.get('class', '').split('.')[-1]}"
+                         + (f" ×{node['repeat']}" if node.get("repeat") else "")
+                         + f" {_params(node.get('params', 0))}{extra}")
+            if level < depth:
+                for child in node.get("children") or []:
+                    key = re.sub(r"^\d+–\d+$", "*", child["name"])
+                    walk(child, f"{path}/{re.sub(r'….*$', '…', key)}", level + 1, child["name"])
+            elif node.get("children"):
+                lines.append(f"    {'  ' * (level + 1)}… {len(node['children'])} blocks below")
+        lines.append(f"    model returned: {name}" + (f" (in {len(others)} runs)" if len(others) > 1 else ""))
+        walk(tree, "", 0, name)
+    return lines
+
+
 def schema(runs: list[dict], method: str, main: str | None) -> list[str]:
     """The method as data → steps (their components, as a tree) → benchmarks, with the
     values of its best run; `*name=value [tried]` for components that vary."""
@@ -623,7 +670,12 @@ def schema(runs: list[dict], method: str, main: str | None) -> list[str]:
             if step["name"] not in order:
                 order.append(step["name"])
     scored = [r for r in kept if main and isinstance((r.get("results") or {}).get(main), (int, float))]
-    best = (min if main and lower_is_better(main) else max)(scored, key=lambda r: r["results"][main]) if scored else kept[0]
+    # The best among runs that have settings for these steps (not a reference run without them).
+    count = {id(r): sum(1 for k in _factors(r) if k.split(".")[0] in order) for r in kept}
+    most = max(count.values(), default=0)
+    complete = [r for r in kept if count[id(r)] * 2 >= most]
+    pool = [r for r in scored if r in complete] or scored
+    best = (min if main and lower_is_better(main) else max)(pool, key=lambda r: r["results"][main]) if pool else (complete or kept)[0]
     steps = {s["name"]: s for s in best["steps"]}
     reads_known = any("reads" in s for r in kept for s in r["steps"])
     short = best["experience"][len(method) + 1:] if best["experience"].startswith(f"{method}/") else best["experience"]
@@ -654,6 +706,7 @@ def schema(runs: list[dict], method: str, main: str | None) -> list[str]:
             else:
                 shown = varying + [t for t in items if not t.startswith("*")][:6 - len(varying)]
                 lines.append(f"    {' · '.join(shown)}" + (f" +{len(items) - len(shown)}" if len(items) > len(shown) else ""))
+        lines += architecture(kept, name, best)
     benches = {b for (b, _) in scores(best)}
     if benches:
         lines.append(f"  → {len(benches)} benchmarks measured (useml info project <p> --benchmarks)")

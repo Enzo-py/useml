@@ -335,3 +335,26 @@ def test_schema_shows_steps_components_and_what_varies(project):
     assert "report (exp_steps:summary)" in block
     assert "*values=[" in block                                        # the list that varies
     assert "label=fixed" in block and "*label" not in block
+
+
+# ── a model's blocks ─────────────────────────────────────────────────────────
+
+def test_architecture_is_captured_folded_and_compared(project):
+    torch = pytest.importorskip("torch")
+    from useml.exp import _architecture
+
+    for depth, norm in ((2, False), (4, True)):
+        with exp.experience(f"wide/net/d{depth}", detach=False) as e:
+            e.step(steps.tiny_net, depth, norm, name="model")
+    tree = json.loads((exp.open("wide/net/d4").path("model") / "architecture.json").read_text())["model"]
+    assert tree["class"].endswith("TinyNet") and tree["params"] > 0
+    layers = tree["children"][0]
+    assert layers["name"] == "layers" and layers["children"][0]["name"] == "0–3"
+    assert layers["children"][0]["repeat"] == 4                         # folded repeats
+    record = projects.record(exp.open("wide/net/d4"))
+    assert record["steps"][0]["architecture"]["model"]["class"].endswith("TinyNet")
+    text = info.project(info.Local(), "robust-vision", method="wide", family_name="net")
+    assert "*0–3 TinyBlock ×4" in text                                  # repeats differ (2 vs 4)
+    assert "*norm LayerNorm" in text                                     # Identity in the other run
+    assert "head Linear" in text and "*head" not in text                 # unchanged
+    assert _architecture.capture({"nothing": 1}, exp.open("wide/net/d4").path("model")) is None

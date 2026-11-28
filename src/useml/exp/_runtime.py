@@ -270,6 +270,9 @@ def execute(folder) -> None:
 
             with Capture(folder, name, context=context):     # tqdm and printed metrics
                 value = function(*args, **kwargs)
+            from ._architecture import capture as capture_architecture
+
+            capture_architecture(value, step_dir)                # a model's blocks, if any
             meta = _outputs.save(value, step_dir)
             cache[name] = value
             seconds = time.time() - started

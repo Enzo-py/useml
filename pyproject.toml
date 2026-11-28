@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "useml"
-version = "1.8.0"
+version = "1.9.0"
 description = "One root for every ML cache, one gate for every download, data processed once."
 readme = "README.md"
 requires-python = ">=3.10"

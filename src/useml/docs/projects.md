@@ -105,7 +105,13 @@ dashboard keeps them. The **Projects** tab shows:
   component that varies across runs is colored (hover: the values tried); one set in some
   runs only is in italics. Choose a run: the boxes show its values, outlined where they
   differ from the best run, and its scores. A step whose code changed between runs says
-  so. The schema draws what the steps receive, not what happens inside the code: named
+  so. **The model itself**: when a step returns a PyTorch module (alone, or in a dict, a
+  list, or as an attribute), the run records its blocks — name, class, parameters, the
+  dimensions PyTorch prints (`in_features=64, out_features=10`), identical neighbours
+  folded (`0–11 Block ×12`). The step's box shows this tree; a block that differs across
+  runs (another class, other sizes, more repeats, added or removed) is colored, and
+  outlined where the chosen run differs from the best. Only runs started with useml 1.9 or
+  later have it; nothing is imported to get it, and no weight is read. The schema draws what the steps receive, not what happens inside the code: named
   arguments and configs make it richer;
 - for a method, **its evolution**: every run in order with its main result, the line of
   the best so far, and the list of each new best — by how much it beat the previous one,
