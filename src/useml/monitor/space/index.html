@@ -301,7 +301,7 @@
   .schema { position: relative; overflow-x: auto; padding: 16px; }
   .schema-links { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
   .schema-flow { position: relative; display: flex; gap: 44px; align-items: flex-start; min-width: min-content; }
-  .schema-col { display: grid; gap: 14px; min-width: 200px; max-width: 420px; }
+  .schema-col { display: grid; gap: 14px; min-width: 240px; max-width: 460px; }
   .schema-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); }
   .schema-card.varies { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
   .schema-card.io { background: var(--surface-2); }
@@ -331,6 +331,50 @@
   .arch .block-params { color: var(--faint); font-size: 11px; }
   .arch .block-extra { font: 11px var(--mono); color: var(--faint); margin: 0 0 2px 22px; white-space: normal; word-break: break-word; }
   .arch .leafy .block-extra { margin-left: 12px; }
+
+  /* bento: tiles for benchmarks, components and models */
+  .bento { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); grid-auto-flow: dense; }
+  .tile { padding: 14px 16px; display: grid; gap: 4px; align-content: start; text-decoration: none; color: inherit; min-height: 132px; }
+  .tile:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .tile.wide { grid-column: span 2; }
+  .tile-name { font: 600 13px var(--mono); color: var(--muted); line-height: 1.3; }
+  .tile-value { font-size: 30px; font-weight: 750; letter-spacing: -.02em; line-height: 1.1; margin-top: 6px; }
+  .tile.wide .tile-value { font-size: 40px; }
+  .tile-metric { font-size: 12px; color: var(--muted); }
+  .tile-model { font-size: 13px; margin-top: 4px; }
+  .tile-foot { font-size: 11.5px; color: var(--faint); margin-top: auto; padding-top: 6px; }
+  .agrid { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); margin-top: 6px; }
+  .atile { display: grid; gap: 1px; padding: 6px 8px; border-radius: 8px; background: var(--surface-2); min-width: 0; }
+  .atile-name { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .atile-value { font: 600 13px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .atile.varies { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+  .atile.varies .atile-name { color: var(--accent); font-weight: 600; }
+  .atile.partial .atile-name { font-style: italic; }
+  .atile.changed { box-shadow: inset 0 0 0 2px var(--warn); }
+  .atile .tried { justify-self: start; font-size: 10px; color: var(--accent); }
+  .agroup { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; background: var(--surface); }
+  .agroup.varies { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .agroup-head { display: flex; justify-content: space-between; gap: 8px; cursor: pointer; font-size: 12.5px; }
+  .agroup.varies .group-name { color: var(--accent); font-weight: 600; }
+  .model-panel h4 { color: var(--text); font-size: 14px; }
+  .abox-root { display: flex; }
+  .abox { display: flex; flex-direction: column; gap: 2px; min-width: 0; border-radius: 10px; padding: 8px 10px;
+          border: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 3%, var(--surface)); position: relative; }
+  .abox.depth-1 { background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+  .abox.depth-2 { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+  .abox.depth-3, .abox.depth-4 { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+  .abox.leaf { background: var(--surface); }
+  .abox.varies { border: 2px solid var(--accent); }
+  .abox.varies-inside { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .abox.changed { outline: 2px solid var(--warn); outline-offset: 1px; }
+  .abox.stacked { box-shadow: 4px 4px 0 -1px var(--surface), 4px 4px 0 0 var(--line), 8px 8px 0 -1px var(--surface), 8px 8px 0 0 var(--line); margin: 0 8px 8px 0; }
+  .abox-head { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; }
+  .abox-name { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .abox-repeat { font: 700 12px var(--mono); color: var(--accent); }
+  .abox-class { font: 650 13px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .abox-meta { font-size: 11px; color: var(--faint); }
+  .abox-kids { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; align-items: stretch; }
+  .abox-more { align-self: start; margin-top: 4px; border: 1px dashed var(--line); background: transparent; border-radius: 6px; font-size: 11px; color: var(--muted); padding: 2px 8px; }
 
   /* evolution and reports */
   .records { display: grid; gap: 2px; }
@@ -1532,9 +1576,9 @@ function renderMethod(root) {
     out.push(runningSection(runs));
     out.push(schemaSection(project, runs));
     out.push(evolutionSection(project, runs));
-    out.push(versionsSection(project, runs));
     out.push(ablationSection(project, runs, {scope: "method"}));
     out.push(curvesSection(runs));
+    out.push(versionsSection(project, runs));          // at the bottom: rarely read first
   }
   root.replaceChildren(...out.filter(Boolean));
 }
@@ -1590,19 +1634,31 @@ function schemaModel(runs) {
   }
   return {order, steps, level, trees, kept};
 }
+function familyChips(project, allRuns) {
+  // The family of runs shown by the schema and the table (one choice for both).
+  const {families, names, key, current} = currentFamily(project, allRuns);
+  return names.length > 1 ? el("div", {class: "toolbar"}, el("span", {class: "small muted"}, "family"),
+    el("div", {class: "chips"}, names.map((n) => el("button", {class: `chip${n === current ? " on" : ""}`, title: `runs named ${view.method}/${n}/…`,
+      onclick: () => { mapState.family[key] = n; mapState.cell = null; renderProjectsView(); }},
+      `${n} · ${families[n].length}`)))) : null;
+}
 function schemaSection(project, allRuns) {
   const {runs} = currentFamily(project, allRuns);
   const model = schemaModel(runs);
   if (!model) return null;
-  const main = primaryOf(project, allRuns);
+  // 1. The runs that have settings for these steps (a reference run without them would show
+  //    "—" everywhere). 2. Their main result: the method's if they have it, else their own.
+  // 3. The default run: the best on it, else one with benchmark scores.
+  const settings = (r) => Object.keys(r.factors || {}).filter((k) => model.order.some((n) => k.startsWith(`${n}.`))).length;
+  const complete = (r) => settings(r) > 0;
+  const pool = model.kept.filter(complete);
+  const has = (key) => key && pool.some((r) => typeof r.results?.[key] === "number");
+  const candidates = [primaryOf(project, allRuns), primaryOf(project, runs), primaryOf(project, pool.length ? pool : runs)];
+  const main = candidates.find(has) || candidates[0];
   const scored = model.kept.filter((r) => typeof r.results?.[main] === "number")
     .sort((a, b) => lowerIsBetter(main) ? a.results[main] - b.results[main] : b.results[main] - a.results[main]);
-  // The default run: the best among those that have settings for these steps (a reference
-  // run without them would show "—" everywhere).
-  const settings = (r) => Object.keys(r.factors || {}).filter((k) => model.order.some((n) => k.startsWith(`${n}.`))).length;
-  const most = Math.max(0, ...model.kept.map(settings));
-  const complete = (r) => settings(r) * 2 >= most;
-  const bestRun = scored.find(complete) || model.kept.find(complete) || scored[0] || model.kept[0];
+  const bestRun = scored.find(complete) || pool.find((r) => Object.keys(columnValues(r)).length)
+    || pool[0] || scored[0] || model.kept[0];
   mapState.schemaRun ||= {};
   const stateKey = `${project.name}/${view.method}/${family(bestRun)}`;
   const selected = model.kept.find((r) => r.key === mapState.schemaRun[stateKey]) || bestRun;
@@ -1610,22 +1666,25 @@ function schemaSection(project, allRuns) {
     [...scored, ...model.kept.filter((r) => !scored.includes(r))].map((r) => el("option", {value: r.key, selected: r === selected ? "selected" : null},
       `${shortName(r.experience)} · v${r.version}${typeof r.results?.[main] === "number" ? ` · ${number(r.results[main])}` : ""}${r === bestRun ? " (best)" : ""}`)));
   const leafValue = (node, run) => run.factors?.[node.key];
-  const renderNode = (node, depth) => {
+  mapState.argOpen ||= new Set();
+  const renderNode = (node, depth, path = node.name) => {
     if (node.key !== undefined && !node.children.size) {
       const value = leafValue(node, selected);
       const changed = selected !== bestRun && JSON.stringify(value ?? null) !== JSON.stringify(leafValue(node, bestRun) ?? null);
       const triedText = [...node.tried.entries()].map(([v, n]) => `${show(JSON.parse(v))} ×${n}`).join(" · ");
-      return el("div", {class: `leaf${node.varying ? " varies" : ""}${node.partial ? " partial" : ""}${changed ? " changed" : ""}`,
+      return el("div", {class: `atile${node.varying ? " varies" : ""}${node.partial ? " partial" : ""}${changed ? " changed" : ""}`,
           title: `${node.key}\ntried: ${triedText}${node.partial ? "\n(set in some runs only)" : ""}${changed ? `\nbest run: ${show(leafValue(node, bestRun) ?? "—")}` : ""}`},
-        el("span", {class: "leaf-name"}, node.name), el("span", {class: "leaf-value"}, mark(value)),
-        node.varying ? el("span", {class: "tried"}, `${[...node.tried.keys()].filter((v) => v !== "null").length}`) : null);
+        el("span", {class: "atile-name"}, node.name), el("span", {class: "atile-value"}, mark(value)),
+        node.varying ? el("span", {class: "tried"}, `${[...node.tried.keys()].filter((v) => v !== "null").length} tried`) : null);
     }
     const children = [...node.children.values()];
     const varying = children.filter((c) => c.varying).length;
-    const summary = el("summary", {}, el("span", {class: "group-name"}, node.name),
-      el("span", {class: "faint tiny"}, ` ${children.length}${varying ? ` · ${varying} vary` : ""}`));
-    return el("details", {class: `group${node.varying ? " varies" : ""}`, open: node.varying ? "" : null},
-      summary, children.map((c) => renderNode(c, depth + 1)));
+    const key = `${view.method}/${path}`;
+    const open = node.varying || mapState.argOpen.has(key);
+    return el("div", {class: `agroup${node.varying ? " varies" : ""}`},
+      el("div", {class: "agroup-head", onclick: () => { open ? mapState.argOpen.delete(key) : mapState.argOpen.add(key); renderProjectsView(); }},
+        el("span", {class: "group-name"}, node.name), el("span", {class: "faint tiny"}, `${children.length}${varying ? ` · ${varying} vary` : ""} ${open ? "▾" : "▸"}`)),
+      open ? el("div", {class: "agrid"}, children.map((c) => renderNode(c, depth + 1, `${path}/${c.name}`))) : null);
   };
   const columns = [];
   for (const name of model.order) (columns[model.level[name]] ||= []).push(name);
@@ -1641,8 +1700,10 @@ function schemaSection(project, allRuns) {
     const badges = [step.codes.size > 1 ? el("span", {class: "chip-note", title: "different code of this step across runs"}, `${step.codes.size} code versions`) : null,
                     selected !== bestRun && selectedCode && bestCode && selectedCode !== bestCode ? el("span", {class: "chip-note warn"}, "code ≠ best run") : null].filter(Boolean);
     const body = tree.children.size ? [...tree.children.values()].map((c) => renderNode(c, 1)) : [el("div", {class: "tiny faint"}, "no plain argument")];
-    const arch = archSection(name, model, selected, bestRun);
-    return card(`step:${name}`, name, step.function, el("div", {}, badges.length ? el("div", {class: "chips-row", style: {margin: "4px 0"}}, badges) : null, body, arch), tree.varying ? "varies" : "");
+    const archTrees = selected.steps.find((s) => s.name === name)?.architecture;
+    const arch = archTrees ? el("div", {class: "chips-row", style: {marginTop: "8px"}}, Object.entries(archTrees).map(([m, t]) =>
+      el("span", {class: "chip-note", title: "drawn below the schema"}, `model ${short(t.class)} · ${params(t.params || 0)} ↓`))) : null;
+    return card(`step:${name}`, name, step.function, el("div", {}, badges.length ? el("div", {class: "chips-row", style: {margin: "4px 0"}}, badges) : null, el("div", {class: "agrid"}, body), arch), tree.varying ? "varies" : "");
   };
   const flow = el("div", {class: "schema-flow"},
     datasets.length ? el("div", {class: "schema-col"}, card("data", "Data", null, el("div", {class: "chips-row"}, datasets.map((d) => el("span", {class: "chip-note mono"}, d))), "io")) : null,
@@ -1676,9 +1737,10 @@ function schemaSection(project, allRuns) {
   });
   const varyingCount = model.order.reduce((n, name) => n + countVarying(model.trees[name]), 0);
   return el("section", {}, el("h2", {}, "Schema ", el("span", {class: "count"}, `data → steps and their components → benchmarks · ${varyingCount} component${varyingCount === 1 ? "" : "s"} vary`)),
+    familyChips(project, allRuns),
     el("div", {class: "toolbar"}, el("label", {class: "inline-label"}, "values of", select),
       el("span", {class: "small muted"}, "colored: varies across runs (hover: values tried) · outlined: differs from the best run")),
-    wrap);
+    wrap, ...model.order.flatMap((name) => modelPanels(name, model, selected, bestRun)));
 }
 // ── a model's blocks (captured when a step returns a PyTorch module) ──
 function archPathName(name) {
@@ -1693,36 +1755,64 @@ function archIndex(tree, path = "", out = {}) {
 }
 function short(cls) { return (cls || "").split(".").pop(); }
 function params(n) { return n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n); }
-function archSection(stepName, model, selected, bestRun) {
-  // The models a step returned, as nested blocks; blocks that differ across runs are colored.
+function dims(extra) {
+  // What PyTorch prints, made short: "in_features=64, out_features=10" → "64→10".
+  if (!extra) return "";
+  const io = extra.match(/in_(?:features|channels)=(\d+).*?out_(?:features|channels)=(\d+)/);
+  if (io) {
+    const kernel = extra.match(/kernel_size=\(?(\d+)/);
+    return `${io[1]}→${io[2]}${kernel ? ` k${kernel[1]}` : ""}`;
+  }
+  const tuple = extra.match(/^\(?\s*([\d, ]+?)\s*,?\s*\)?(?:,|$)/);
+  if (tuple) return tuple[1].replace(/\s+/g, "");
+  return extra.length > 28 ? `${extra.slice(0, 27)}…` : extra;
+}
+function modelPanels(stepName, model, selected, bestRun) {
+  // The models a step returned, drawn as nested blocks: a block holds its sub-blocks; its
+  // width follows its parameter count; a repeated block is a stack ("×12").
   const withArch = model.kept.filter((r) => r.steps.find((s) => s.name === stepName)?.architecture);
   const mine = selected.steps.find((s) => s.name === stepName)?.architecture;
-  if (!mine) return withArch.length ? el("div", {class: "tiny faint"}, "model: not recorded for this run") : null;
+  if (!mine) return [];
   const best = bestRun.steps.find((s) => s.name === stepName)?.architecture || {};
+  mapState.archOpen ||= new Set();
   return Object.entries(mine).map(([name, tree]) => {
     const indexes = withArch.map((r) => archIndex(r.steps.find((s) => s.name === stepName).architecture[name] || {children: []}));
     const bestIndex = best[name] ? archIndex(best[name]) : {};
-    const describeNode = (node) => `${short(node.class)}${node.repeat ? ` ×${node.repeat}` : ""} ${node.extra || ""} ${node.params}`;
-    const render = (node, path, depth) => {
-      const seen = new Map();
-      for (const index of indexes) { const other = index[path]; const text = other ? describeNode(other) : "absent"; seen.set(text, (seen.get(text) || 0) + 1); }
-      const varies = seen.size > 1;
-      const other = bestIndex[path];
-      const changed = selected !== bestRun && (!other || describeNode(other) !== describeNode(node));
-      const subtree = (node.children || []).map((c) => render(c, `${path}/${archPathName(c.name)}`, depth + 1));
-      const anyVaries = varies || subtree.some((x) => x.varies);
-      const head = el("div", {class: `block-row${varies ? " varies" : ""}${changed ? " changed" : ""}`,
-          title: `${node.class}${node.extra ? `\n${node.extra}` : ""}\n${node.params.toLocaleString()} parameters${node.trainable !== undefined && node.trainable !== node.params ? ` (${node.trainable.toLocaleString()} trainable)` : ""}${varies ? `\nacross runs: ${[...seen.entries()].map(([t, n]) => `${t.split(" ")[0]} ×${n}`).join(" · ")}` : ""}${changed ? `\nbest run: ${other ? describeNode(other) : "absent"}` : ""}`},
-        el("span", {class: "block-name"}, node.name || name), el("span", {class: "block-class"}, short(node.class)),
-        node.repeat ? el("span", {class: "tried"}, `×${node.repeat}`) : null,
-        el("span", {class: "block-params"}, params(node.params)));
-      const extra = node.extra ? el("div", {class: "block-extra"}, node.extra) : null;
-      const elNode = subtree.length
-        ? el("details", {class: "arch-block", open: anyVaries || depth < 1 ? "" : null}, el("summary", {}, head), extra, subtree.map((x) => x.node))
-        : el("div", {class: "arch-block leafy"}, head, extra);
-      return {node: elNode, varies: anyVaries};
+    const sig = (n) => `${short(n.class)}×${n.repeat || 1} ${n.extra || ""} ${n.params}`;
+    const variants = (path) => { const m = new Map(); for (const ix of indexes) { const t = ix[path] ? sig(ix[path]) : "absent"; m.set(t, (m.get(t) || 0) + 1); } return m; };
+    const varies = {};
+    const mark = (node, path) => {
+      let any = variants(path).size > 1;
+      for (const c of node.children || []) if (mark(c, `${path}/${archPathName(c.name)}`)) any = true;
+      return varies[path] = any;
     };
-    return el("div", {class: "arch"}, el("div", {class: "tiny muted", style: {margin: "6px 0 2px"}}, `model returned: ${name}`), render(tree, "", 0).node);
+    mark(tree, "");
+    const box = (node, path, depth) => {
+      const own = variants(path);
+      const other = bestIndex[path];
+      const changed = selected !== bestRun && (!other || sig(other) !== sig(node));
+      const kids = node.children || [];
+      const key = `${stepName}/${name}${path}`;
+      const open = kids.length && (depth < 2 || varies[path] || mapState.archOpen.has(key));
+      const grow = Math.max(1, Math.log10((node.params || 0) + 10) - 1);
+      const title = `${node.class}${node.extra ? `\n${node.extra}` : ""}\n${(node.params || 0).toLocaleString()} parameters`
+        + (own.size > 1 ? `\nacross runs: ${[...own.entries()].map(([t, n]) => `${t.split(" ")[0]} ×${n}`).join(" · ")}` : "")
+        + (changed ? `\nbest run: ${other ? sig(other).split(" ")[0] : "absent"}` : "");
+      return el("div", {class: `abox depth-${Math.min(depth, 4)}${own.size > 1 ? " varies" : varies[path] ? " varies-inside" : ""}${changed ? " changed" : ""}${node.repeat ? " stacked" : ""}${kids.length ? "" : " leaf"}`,
+          style: {flex: `${grow.toFixed(2)} 1 ${kids.length ? 200 : 96}px`}, title},
+        el("div", {class: "abox-head"}, el("span", {class: "abox-name"}, depth ? node.name : name),
+          node.repeat ? el("span", {class: "abox-repeat"}, `×${node.repeat}`) : null),
+        el("div", {class: "abox-class"}, short(node.class)),
+        el("div", {class: "abox-meta"}, [params(node.params || 0), dims(node.extra)].filter(Boolean).join(" · ")),
+        kids.length ? (open
+          ? el("div", {class: "abox-kids"}, kids.map((c) => box(c, `${path}/${archPathName(c.name)}`, depth + 1)))
+          : el("button", {class: "abox-more", onclick: (e) => { e.stopPropagation(); mapState.archOpen.add(key); renderProjectsView(); }}, `${kids.length} block${kids.length > 1 ? "s" : ""} inside`)) : null);
+    };
+    return el("div", {class: "card block model-panel"},
+      el("h4", {}, `Model of step “${stepName}”${name !== "model" ? ` (${name})` : ""} · ${short(tree.class)} · ${params(tree.params || 0)} parameters`,
+        withArch.length > 1 ? el("span", {class: "faint small"}, ` · compared over ${withArch.length} runs`) : null),
+      el("div", {class: "abox-root"}, box(tree, "", 0)),
+      el("div", {class: "tiny muted", style: {marginTop: "6px"}}, "A block holds its sub-blocks; its width follows its size. Colored: differs across runs; light: something inside does; outlined: differs from the best run. Hover a block for its class and dimensions."));
   });
 }
 function countVarying(node) {
@@ -1887,18 +1977,24 @@ function bestPerModel(runs, bench, metric) {
   });
 }
 function benchmarksSection(project, runs) {
+  // A bento grid: one tile per benchmark, its best score large; the most used are wider.
   const benches = benchmarksOf(runs);
   const names = Object.keys(benches).sort((a, b) => benches[b].runs.size - benches[a].runs.size || a.localeCompare(b));
   if (!names.length) return null;
   const limit = mapState.allBenches ? names.length : 12;
-  return el("section", {}, el("h2", {}, "Benchmarks ", el("span", {class: "count"}, `${names.length} · where scores were measured; a click gives its sheet`)),
-    el("div", {class: "card table-wrap map"}, el("table", {}, el("tbody", {}, names.slice(0, limit).map((name) => {
+  const most = benches[names[0]].runs.size;
+  return el("section", {}, el("h2", {}, "Benchmarks ", el("span", {class: "count"}, `${names.length} · where scores were measured; a tile opens its sheet`)),
+    el("div", {class: "bento"}, names.slice(0, limit).map((name, i) => {
       const entry = benches[name], metric = benchMain(entry), top = bestPerModel(runs, name, metric)[0];
-      return el("tr", {onclick: () => go(`#/bench/${encodeURIComponent(project.name)}/${encodeURIComponent(name)}`)},
-        el("td", {}, el("div", {class: "mono small"}, name), el("div", {class: "sub"}, `${Object.keys(entry.metrics).length} metrics · ${entry.runs.size} models · ${[...entry.methods].join(", ")}`)),
-        el("td", {class: "num", title: metric}, top ? `${metric} ${number(columnValues(top)[`${name}|${metric}`])}` : ""),
-        el("td", {class: "small muted"}, top ? shortName(top.experience) : ""));
-    })))),
+      const value = top ? columnValues(top)[`${name}|${metric}`] : null;
+      const wide = i < 2 && entry.runs.size * 2 >= most && names.length > 3;
+      return el("a", {class: `card tile${wide ? " wide" : ""}`, href: `#/bench/${encodeURIComponent(project.name)}/${encodeURIComponent(name)}`},
+        el("div", {class: "tile-name"}, breakable(name)),
+        el("div", {class: "tile-value"}, value === null ? "—" : number(value)),
+        el("div", {class: "tile-metric"}, metric, lowerIsBetter(metric) ? " ↓" : " ↑"),
+        top ? el("div", {class: "tile-model"}, "best: ", el("b", {}, modelName(top, name))) : null,
+        el("div", {class: "tile-foot"}, `${entry.runs.size} model${entry.runs.size > 1 ? "s" : ""} · ${Object.keys(entry.metrics).length} metrics · ${[...entry.methods].join(", ")}`));
+    })),
     names.length > 12 ? el("button", {class: "btn small ghost", onclick: () => { mapState.allBenches = !mapState.allBenches; renderProjectsView(); }},
       mapState.allBenches ? "Fewer" : `All ${names.length} benchmarks`) : null);
 }

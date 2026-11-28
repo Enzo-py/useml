@@ -672,8 +672,7 @@ def schema(runs: list[dict], method: str, main: str | None) -> list[str]:
     scored = [r for r in kept if main and isinstance((r.get("results") or {}).get(main), (int, float))]
     # The best among runs that have settings for these steps (not a reference run without them).
     count = {id(r): sum(1 for k in _factors(r) if k.split(".")[0] in order) for r in kept}
-    most = max(count.values(), default=0)
-    complete = [r for r in kept if count[id(r)] * 2 >= most]
+    complete = [r for r in kept if count[id(r)] > 0]
     pool = [r for r in scored if r in complete] or scored
     best = (min if main and lower_is_better(main) else max)(pool, key=lambda r: r["results"][main]) if pool else (complete or kept)[0]
     steps = {s["name"]: s for s in best["steps"]}
