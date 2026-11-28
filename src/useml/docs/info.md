@@ -16,6 +16,8 @@ useml info run wide/w4-mix              # one finished run (an id prefix works)
 useml info run 35a28e5f --code          # + its declaration as Python
 useml info exp gpu-a:wide/w4-mix        # an experience as its machine reports it now, + log
 useml info machine gpu-a                # resources, and useml's health checks there
+useml info project robust-vision --benchmarks   # where scores were measured
+useml info bench robust-vision cifar10-c        # a benchmark: each model at its best
 ```
 
 What each one says:
@@ -32,6 +34,9 @@ What each one says:
   differ between runs (the ones that never change are listed once, at most 10 columns:
   `--factors N` for more), the strongest links between a factor and a result, and the
   code versions with the steps that changed.
+- **project --benchmarks**: every benchmark, its models and methods, the best model;
+  **bench <project> <benchmark>**: its sheet, one row per model at its best run, `*` best and
+  `_` second of each metric.
 - **run**: factors, results, curves as `first → last (best @x)`, steps, data, configs,
   error. `--code` adds the declaration (to write an alternative), `--configs` the YAML.
 - **exp**: status, progress, steps, error, curves and the end of the log, live.
@@ -62,8 +67,8 @@ Without it, useml guesses — a quality measure (accuracy, f1, auc, loss…), ne
 ## For an AI assistant: MCP
 
 MCP (Model Context Protocol) is how an assistant calls tools on your computer. useml is
-an MCP server with five read-only tools — `useml_overview`, `useml_project`, `useml_run`,
-`useml_experience`, `useml_machine` — returning the texts above.
+an MCP server with six read-only tools — `useml_overview`, `useml_project`,
+`useml_benchmarks`, `useml_run`, `useml_experience`, `useml_machine` — returning the texts above.
 
 ```bash
 claude mcp add useml -- useml mcp       # Claude Code, once

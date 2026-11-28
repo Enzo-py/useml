@@ -196,7 +196,8 @@ def test_mcp_protocol(project, monkeypatch):
     assert [a.get("id") for a in answers] == [1, 2, 3, 4, 5, None]        # no answer to a notification
     assert answers[0]["result"]["protocolVersion"] == "2025-06-18"
     assert {t["name"] for t in answers[1]["result"]["tools"]} == {
-        "useml_overview", "useml_project", "useml_run", "useml_experience", "useml_machine"}
+        "useml_overview", "useml_project", "useml_benchmarks", "useml_run", "useml_experience",
+        "useml_machine"}
     assert "train.steps" in answers[2]["result"]["content"][0]["text"]
     assert answers[2]["result"]["isError"] is False and answers[3]["result"]["isError"] is True
     assert answers[4]["error"]["code"] == -32601 and answers[5]["error"]["code"] == -32700
@@ -284,3 +285,29 @@ def test_families_and_which_factors_differ(project):
     assert "| v2/x |" in table and "| v2/y |" in table       # without the method, with the family
     other = info.project(src, "robust-vision", method="wide", family_name="·")
     assert "showing ·" in other and "train.steps" in other
+
+
+# ── benchmarks: from result keys or from run names ───────────────────────────
+
+def test_bench_of_reads_keys_and_names():
+    run = {"experience": "base/flowers/classify/knn", "method": "base"}
+    assert info.bench_of(run, "report.metrics.f1_pct") == ("flowers/classify", "f1_pct")   # name
+    assert info.bench_of(run, "report.coco/clip.edge_f1") == ("coco/clip", "edge_f1")   # key
+    assert info.bench_of(run, "report.noise.low.coco.f1") == ("noise.low.coco", "f1")
+    assert info.bench_of(run, "report.metrics.n_test") is None                         # a count
+    assert info.bench_of(run, "train.loss.best") is None                               # a curve
+
+
+def test_benchmark_sheet(project):
+    for model, accuracy in (("tfidf", 0.7), ("knn", 0.8)):
+        with exp.experience(f"wide/flowers/{model}", detach=False) as e:
+            e.step(steps.summary, [accuracy, accuracy], label=model, name="report")
+    src = info.Local()
+    listing = info.benchmarks(src, "robust-vision")
+    assert "BENCHMARKS of robust-vision" in listing and "flowers · 2 models" in listing
+    sheet = info.bench(src, "robust-vision", "flowers")
+    rows = [line for line in sheet.splitlines() if line.startswith("  ") and "|" in line][1:]
+    assert rows[0].startswith("  knn | wide | *") and rows[1].startswith("  tfidf | wide | _")
+    with pytest.raises(info.InfoError, match="no benchmark"):
+        info.bench(src, "robust-vision", "nope")
+    assert "useml_benchmarks" in {t["name"] for t in mcp.TOOLS}

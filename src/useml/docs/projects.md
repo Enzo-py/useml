@@ -108,7 +108,12 @@ dashboard keeps them. The **Projects** tab shows:
   of the same version ran the same code and differ only by their factors. The page says
   which step's code changed from one version to the next, and the git commit (`*` when
   there were uncommitted changes);
-- **the ablation map**, on a method's page: a row per run. Runs whose names differ by
+- **the ablation table**, on a method's page, laid out like a paper's: the components that
+  change (✓ / × for yes / no, – when left out), then the scores grouped by benchmark and
+  metric; **bold** is the best of a column, underlined the second; the best configuration
+  is highlighted; rows come in blocks by their main component. Chips choose the
+  benchmarks and metrics shown (by default: the main metric on every benchmark that has
+  it). **Copy LaTeX** gives a booktabs table, **Copy Markdown** a Markdown one. A row per run. Runs whose names differ by
   their first part under the method (`v2/…`, `sweep/…`) are **families**, compared
   apart (chips to switch): they rarely share results or settings. The results come first
   (green: better, red: worse, (green: better, red: worse,
@@ -122,6 +127,12 @@ dashboard keeps them. The **Projects** tab shows:
   green when more of the factor goes with a better result — and `η` (from 0 to 1) for
   choices among names, how much the choice explains the result. A click draws the runs.
   With few runs, read it as a hint, not a proof;
+- **benchmarks**: where scores were measured. A score `report.<benchmark>.<metric>` names
+  its benchmark in its key; a score `report.metrics.<metric>` takes it from the run's name
+  (`baselines/<dataset>/<task>/<model>` → benchmark `<dataset>/<task>`). Each benchmark has
+  a **sheet**: one row per model (each experience name) at its best run, its metrics,
+  blocks by method — the baselines and the best version of each model side by side, with
+  the same exports. A dataset links to the benchmarks named after it;
 - **curves** of the runs side by side, the running ones included (thicker, marked
   "live", updated at every refresh): a new attempt is compared with the previous ones while
   it trains. A running run also shows its current values in the ablation map;

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import time
 import os
 import sys
 import textwrap
@@ -270,3 +271,30 @@ def test_remove_table_keeps_its_neighbours(tmp_path):
     assert _settings.remove_table(path, "b") is True
     assert path.read_text() == '[a]\nk = 1\n\n# about c\n[c]\nk = 3\n'
     assert _settings.remove_table(path, "nope") is False
+
+
+def test_a_restarted_dashboard_counts_its_history_at_once(project, tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from useml import monitor
+
+    history = tmp_path / "kept"
+    (history / "projects" / "p" / "runs").mkdir(parents=True)
+    for index in range(3):
+        record = {"format": "useml-run/1", "id": f"{index:016x}", "project": "p"}
+        (history / "projects" / "p" / "runs" / f"{index:016x}.json").write_text(json.dumps(record))
+    monkeypatch.setenv("USEML_HISTORY_DIR", str(history))
+    monkeypatch.setenv("USEML_MONITOR_TOKEN", "local-secret")
+    monkeypatch.delenv("SPACE_ID", raising=False)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("restart_app", monitor.space_folder() / "app.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    client = TestClient(module.app)
+    client.get("/?token=local-secret")
+    assert client.get("/api/state").json()["history"]["runs"] == 3     # the first answer
+    calls = []
+    module._history.update(loaded=False, retry_at=time.time() + 60)
+    monkeypatch.setattr(module, "_load_history", lambda: calls.append(1))
+    client.get("/api/state")
+    assert calls == []                                    # a failed read is not retried at once

@@ -169,6 +169,7 @@ def _load_history() -> None:
             _history["loaded"], _history["error"] = True, None
         except Exception as error:                               # noqa: BLE001
             _history["error"] = f"cannot read the history: {error}"
+            _history["retry_at"] = time.time() + 60          # not at every refresh
 
 
 def _write_history(files: dict) -> None:
@@ -276,10 +277,18 @@ def _light(request: Request) -> bool:
     return request.query_params.get("light") in ("1", "true")
 
 
+async def _history_ready() -> None:
+    """Read the kept history once, before the first answer that counts it (a restarted
+    dashboard would otherwise say "0 runs" until a project is opened)."""
+    if _history["where"] and not _history["loaded"] and time.time() >= _history.get("retry_at", 0):
+        await asyncio.to_thread(_load_history)
+
+
 @app.get("/api/state")
 async def state(request: Request):
     """Everything (`?light=1`: without results, figures, configs and setup)."""
     _require(_browser_allowed(request))
+    await _history_ready()
     return JSONResponse(_state(_light(request)), headers={"Cache-Control": "no-store"})
 
 
@@ -327,8 +336,7 @@ def _live_by_project() -> dict:
 @app.get("/api/projects")
 async def projects(request: Request):
     _require(_browser_allowed(request))
-    if _history["where"] and not _history["loaded"]:
-        await asyncio.to_thread(_load_history)
+    await _history_ready()
     live = _live_by_project()
     names = set(_projects) | set(live) | {r["project"] for r in _records.values()}
     out = []
@@ -348,8 +356,7 @@ async def projects(request: Request):
 @app.get("/api/project")
 async def project(request: Request, name: str):
     _require(_browser_allowed(request))
-    if _history["where"] and not _history["loaded"]:
-        await asyncio.to_thread(_load_history)
+    await _history_ready()
     live = _live_by_project().get(name, [])
     runs = sorted((r for r in _records.values() if r.get("project") == name),
                   key=lambda r: r.get("ended") or 0, reverse=True)
@@ -381,6 +388,7 @@ async def refresh(request: Request):
     Body: {"machine": alias (default: all), "full": true (default) or false}. Only agents
     that are listening are waited for: a machine that went silent never slows the page."""
     _require(_browser_allowed(request))
+    await _history_ready()
     try:
         body = await request.json()
     except Exception:                                              # noqa: BLE001

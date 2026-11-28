@@ -485,6 +485,131 @@ def evolution(runs: list[dict], main: str, *, prefix: str = "") -> list[str]:
     return lines
 
 
+GENERIC = {"metrics", "metric", "results", "result", "scores", "score", "eval", "evaluation",
+           "test", "val", "valid", "report", "summary", "final", "output", "outputs"}
+
+
+def bench_of(run: dict, key: str) -> tuple[str, str] | None:
+    """(benchmark, metric) of a result key — the same rule as the dashboard: the metric is the
+    last part; the benchmark is the middle (`report.<benchmark>.<metric>`), or, when the
+    middle says nothing (`report.metrics.f1`), the run's name without its method and its
+    last part (the model). Training curves and counts are not benchmark scores."""
+    from .projects import COUNT
+
+    if key.endswith((".last", ".best")):
+        return None
+    parts = key.split(".")
+    if len(parts) < 2 or COUNT.search(parts[-1]):
+        return None
+    middle = [p for p in parts[1:-1] if p.lower() not in GENERIC]
+    if middle:
+        return ".".join(middle), parts[-1]
+    method = run.get("method") or ""
+    short = run["experience"][len(method) + 1:] if run["experience"].startswith(f"{method}/") else run["experience"]
+    names = short.split("/")
+    return ("/".join(names[:-1]) if len(names) > 1 else parts[0]), parts[-1]
+
+
+def scores(run: dict) -> dict:
+    """{(benchmark, metric): value} of a run."""
+    out = {}
+    for key, number in (run.get("results") or {}).items():
+        where = bench_of(run, key) if isinstance(number, (int, float)) else None
+        if where:
+            out[where] = number
+    return out
+
+
+def benchmarks(src, name: str) -> str:
+    """The project's benchmarks: models, metrics, the best model on the main metric."""
+    page = src.project(name)
+    if page is None:
+        raise InfoError(f"no project {name!r}")
+    runs = _distinct([r for r in page["runs"]])
+    table: dict = {}
+    for run in runs:
+        for (bench, metric), value_ in scores(run).items():
+            entry = table.setdefault(bench, {"metrics": {}, "models": set(), "methods": set()})
+            entry["metrics"][metric] = entry["metrics"].get(metric, 0) + 1
+            entry["models"].add(run["experience"])
+            entry["methods"].add(run.get("method") or "(unassigned)")
+    if not table:
+        return f"PROJECT {name}: no benchmark score kept yet"
+    lines = [f"BENCHMARKS of {name} ({len(table)}; benchmark · models · methods · best on its main metric)"]
+    for bench in sorted(table, key=lambda b: (-len(table[b]["models"]), b)):
+        entry = table[bench]
+        metric = _bench_main(entry["metrics"])
+        top = _leaderboard(runs, bench, metric)[:1]
+        lines.append(f"  {bench} · {len(entry['models'])} models · {','.join(sorted(entry['methods']))}"
+                     + (f" · best {metric}={num(scores(top[0])[(bench, metric)])} ({_model(top[0], bench)})" if top else ""))
+    lines.append(f"MORE: useml info bench {name} <benchmark>")
+    return "\n".join(lines)
+
+
+def _bench_main(metrics: dict) -> str:
+    from .projects import MEASURE
+
+    return sorted(metrics, key=lambda m: (not MEASURE.search(m), -metrics[m], m.lower()))[0]
+
+
+def _model(run: dict, bench: str) -> str:
+    method = run.get("method") or ""
+    name = run["experience"][len(method) + 1:] if run["experience"].startswith(f"{method}/") else run["experience"]
+    return name[len(bench) + 1:] if name.startswith(f"{bench}/") else name
+
+
+def _leaderboard(runs: list[dict], bench: str, metric: str) -> list[dict]:
+    """One run per model (experience): its best on (bench, metric), best first."""
+    lower = lower_is_better(metric)
+    best: dict = {}
+    for run in runs:
+        v = scores(run).get((bench, metric))
+        if not isinstance(v, (int, float)):
+            continue
+        kept = best.get(run["experience"])
+        if kept is None or (v < scores(kept)[(bench, metric)] if lower else v > scores(kept)[(bench, metric)]):
+            best[run["experience"]] = run
+    return sorted(best.values(), key=lambda r: scores(r)[(bench, metric)], reverse=not lower)
+
+
+def bench(src, name: str, benchmark: str, *, metrics: int = 6) -> str:
+    """A benchmark's sheet: one row per model at its best run, its metrics, by method."""
+    page = src.project(name)
+    if page is None:
+        raise InfoError(f"no project {name!r}")
+    runs = _distinct(page["runs"])
+    counts: dict = {}
+    for run in runs:
+        for (b, metric) in scores(run):
+            if b == benchmark:
+                counts[metric] = counts.get(metric, 0) + 1
+    if not counts:
+        known = sorted({b for run in runs for (b, _) in scores(run)})
+        raise InfoError(f"no benchmark {benchmark!r} in {name}; e.g. {known[:6]}")
+    from .projects import MEASURE
+
+    shown = sorted(counts, key=lambda m: (not MEASURE.search(m), -counts[m], m.lower()))[:metrics]
+    main = shown[0]
+    models = _leaderboard(runs, benchmark, main)
+    best = {m: sorted({scores(r)[(benchmark, m)] for r in models if (benchmark, m) in scores(r)},
+                      reverse=not lower_is_better(m))[:2] for m in shown}
+    lines = [f"BENCHMARK {benchmark} · project {name} · {len(models)} models at their best run on {main} "
+             f"({'lower' if lower_is_better(main) else 'higher'} is better) · *best · _second"]
+    lines.append("  model | method | " + " | ".join(shown) + " | version")
+    for run in models:
+        values = scores(run)
+        cells = []
+        for m in shown:
+            v = values.get((benchmark, m))
+            mark = "" if v is None else "*" if v == best[m][0] else "_" if len(best[m]) > 1 and v == best[m][1] else ""
+            cells.append("-" if v is None else f"{mark}{num(v)}")
+        lines.append(f"  {_model(run, benchmark)}{' ×' + str(run['times']) if run.get('times', 1) > 1 else ''} | "
+                     f"{run.get('method') or '-'} | " + " | ".join(cells) + f" | v{run.get('version')}")
+    if len(counts) > metrics:
+        lines.append(f"  ({len(counts) - metrics} more metrics; --metrics {len(counts)})")
+    return "\n".join(lines)
+
+
 def family(experience: str, method: str) -> str:
     """The first part of a name under its method: `wide/v2/w8` → `v2`; a name alone → `·`."""
     short = experience[len(method) + 1:] if experience.startswith(f"{method}/") else experience

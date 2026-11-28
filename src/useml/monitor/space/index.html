@@ -249,6 +249,24 @@
   .map th, .map td { padding: 7px 10px; white-space: nowrap; }
   .map th.sortable { cursor: pointer; }
   .map th.result-col { text-align: right; }
+  table.paper { font-size: 13px; }
+  table.paper th, table.paper td { padding: 6px 10px; white-space: nowrap; border-bottom: 0; }
+  table.paper thead th { background: var(--surface); border-bottom: 1px solid var(--line); white-space: normal; min-width: 56px; max-width: 160px; vertical-align: bottom; line-height: 1.25; }
+  table.paper thead tr:first-child th { border-bottom: 1px solid var(--text); text-align: center; }
+  table.paper th.group-head { font-weight: 650; color: var(--text); }
+  table.paper th.run-col { text-align: left; vertical-align: bottom; }
+  table.paper tbody { border-top: 1px solid var(--text); }
+  table.paper tbody:last-child { border-bottom: 1.5px solid var(--text); }
+  table.paper td.factor, table.paper td.num { text-align: center; font-variant-numeric: tabular-nums; }
+  table.paper td.first { font-weight: 750; }
+  table.paper td.second { text-decoration: underline; text-underline-offset: 3px; }
+  table.paper tr.top-row td { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+  table.paper td.run-col, table.paper th.run-col { position: sticky; left: 0; background: var(--surface); z-index: 1; }
+  table.paper tr.top-row td.run-col { background: color-mix(in srgb, var(--ok) 13%, var(--surface)); }
+  table.paper .yes { color: var(--ok); font-weight: 700; } table.paper .no { color: var(--faint); }
+  table.paper .group-end { border-right: 1px solid var(--line); }
+  .chips.wrap { flex-wrap: wrap; }
+  .picker { margin-bottom: 6px; }
   .map table.ablation th { white-space: normal; min-width: 72px; max-width: 160px; vertical-align: bottom; line-height: 1.25; word-break: normal; overflow-wrap: normal; }
   .map td.num { text-align: right; font-variant-numeric: tabular-nums; }
   .map td.best { font-weight: 700; }
@@ -776,6 +794,9 @@ function readRoute() {
   else if (parts[0] === "run" && parts[2]) {
     route = {kind: "run", project: parts[1], id: parts[2]};
     if (view.kind === "live") setView({kind: "project", name: parts[1]});
+  } else if (parts[0] === "bench" && parts[2]) {
+    route = null;
+    setView({kind: "bench", name: parts[1], bench: parts.slice(2).join("/")});
   } else if (parts[0] === "new" && parts[1]) {
     route = {kind: "new", project: parts[1], what: parts[2] || "method"};
     if (view.kind === "live") setView({kind: "project", name: parts[1]});
@@ -1096,6 +1117,7 @@ function viewHash() {
   if (view.kind === "projects") return "#/projects";
   if (view.kind === "project") return `#/projects/${encodeURIComponent(view.name)}`;
   if (view.kind === "method") return `#/projects/${encodeURIComponent(view.name)}/${encodeURIComponent(view.method)}`;
+  if (view.kind === "bench") return `#/bench/${encodeURIComponent(view.name)}/${encodeURIComponent(view.bench)}`;
   return "#/";
 }
 let projectLoading = null;                          // {name, promise}: one request at a time
@@ -1110,7 +1132,7 @@ async function loadProject(name) {
 async function loadProjectsView() {
   try {
     if (view.kind === "projects") { projectsList = await call("api/projects"); projectsLoaded = Date.now(); }
-    else if (view.kind === "project" || view.kind === "method") await loadProject(view.name);
+    else if (view.kind === "project" || view.kind === "method" || view.kind === "bench") await loadProject(view.name);
     projectsError = null;
   } catch (error) { projectsError = error.message; }
   renderProjectsView();
@@ -1316,6 +1338,7 @@ function renderProjectsView() {
   if (view.kind === "projects") return renderProjectList(root);
   if (!projectPage || projectPage.project.name !== view.name) { root.replaceChildren(el("div", {class: "loading"}, "Loading…")); return; }
   if (view.kind === "project") renderProject(root);
+  else if (view.kind === "bench") renderBench(root);
   else renderMethod(root);
 }
 function historyNote(history) {
@@ -1443,10 +1466,14 @@ function renderProject(root) {
     datasets[base].runs++; datasets[base].methods.add(run.method || "(unassigned)");
   }
   out.push(el("section", {}, el("h2", {}, "Datasets ", el("span", {class: "count"}, "what you learn and measure on")),
-    Object.keys(datasets).length ? el("div", {class: "dataset-list"}, Object.entries(datasets).sort().map(([name, info]) =>
-      el("div", {class: "card dataset"}, el("b", {}, name), el("span", {class: "small muted"},
-        info.runs ? `${info.runs} runs · ${[...info.methods].join(", ")}` : "declared, no run yet"))))
+    Object.keys(datasets).length ? el("div", {class: "dataset-list"}, Object.entries(datasets).sort().map(([name, info]) => {
+      const linked = Object.keys(benchmarksOf(runs)).filter((b) => b.toLowerCase().includes(name.toLowerCase().split("/")[0]));
+      return el("div", {class: "card dataset"}, el("b", {}, name), el("span", {class: "small muted"},
+        info.runs ? `${info.runs} runs · ${[...info.methods].join(", ")}` : "declared, no run yet"),
+        linked.length ? el("div", {class: "chips-row"}, linked.slice(0, 4).map((b) => el("a", {class: "chip-note", href: `#/bench/${encodeURIComponent(project.name)}/${encodeURIComponent(b)}`}, b))) : null);
+    }))
       : el("div", {class: "card empty-now"}, "No dataset declared or read yet.")));
+  out.push(benchmarksSection(project, runs));
   out.push(latestRunsSection(project, runs));
   root.replaceChildren(...out.filter(Boolean));
 }
@@ -1598,6 +1625,119 @@ function cell(value) {
   const text = show(value);
   return text.length > 24 ? el("span", {title: text}, `${text.slice(0, 23)}…`) : text;
 }
+function benchmarksOf(runs) {
+  // {bench: {metrics: {metric: runs count}, runs: Set(experience), methods: Set}}
+  const out = {};
+  for (const run of runs.filter((r) => !r.live)) {
+    for (const id of Object.keys(columnValues(run))) {
+      const [bench, metric] = id.split("|");
+      const entry = out[bench] ||= {metrics: {}, runs: new Set(), methods: new Set()};
+      entry.metrics[metric] = (entry.metrics[metric] || 0) + 1;
+      entry.runs.add(run.experience); entry.methods.add(run.method || "(unassigned)");
+    }
+  }
+  return out;
+}
+function benchMain(entry) {
+  return Object.keys(entry.metrics).sort((a, b) => (MEASURE.test(a) ? 0 : 1) - (MEASURE.test(b) ? 0 : 1)
+    || entry.metrics[b] - entry.metrics[a] || a.localeCompare(b))[0];
+}
+function bestPerModel(runs, bench, metric) {
+  // One row per model (experience name): its best run on this benchmark.
+  const best = new Map();
+  const lower = lowerIsBetter(metric);
+  for (const run of runs.filter((r) => !r.live)) {
+    const v = columnValues(run)[`${bench}|${metric}`];
+    if (typeof v !== "number") continue;
+    const kept = best.get(run.experience);
+    const keptValue = kept && columnValues(kept)[`${bench}|${metric}`];
+    if (!kept || (lower ? v < keptValue : v > keptValue)) best.set(run.experience, run);
+  }
+  return [...best.values()].sort((a, b) => {
+    const va = columnValues(a)[`${bench}|${metric}`], vb = columnValues(b)[`${bench}|${metric}`];
+    return lower ? va - vb : vb - va;
+  });
+}
+function benchmarksSection(project, runs) {
+  const benches = benchmarksOf(runs);
+  const names = Object.keys(benches).sort((a, b) => benches[b].runs.size - benches[a].runs.size || a.localeCompare(b));
+  if (!names.length) return null;
+  const limit = mapState.allBenches ? names.length : 12;
+  return el("section", {}, el("h2", {}, "Benchmarks ", el("span", {class: "count"}, `${names.length} · where scores were measured; a click gives its sheet`)),
+    el("div", {class: "card table-wrap map"}, el("table", {}, el("tbody", {}, names.slice(0, limit).map((name) => {
+      const entry = benches[name], metric = benchMain(entry), top = bestPerModel(runs, name, metric)[0];
+      return el("tr", {onclick: () => go(`#/bench/${encodeURIComponent(project.name)}/${encodeURIComponent(name)}`)},
+        el("td", {}, el("div", {class: "mono small"}, name), el("div", {class: "sub"}, `${Object.keys(entry.metrics).length} metrics · ${entry.runs.size} models · ${[...entry.methods].join(", ")}`)),
+        el("td", {class: "num", title: metric}, top ? `${metric} ${number(columnValues(top)[`${name}|${metric}`])}` : ""),
+        el("td", {class: "small muted"}, top ? shortName(top.experience) : ""));
+    })))),
+    names.length > 12 ? el("button", {class: "btn small ghost", onclick: () => { mapState.allBenches = !mapState.allBenches; renderProjectsView(); }},
+      mapState.allBenches ? "Fewer" : `All ${names.length} benchmarks`) : null);
+}
+function modelName(run, bench) {
+  // On a benchmark's sheet, a model is its name without its method and the benchmark.
+  const method = run.method || "";
+  let name = run.experience.startsWith(`${method}/`) ? run.experience.slice(method.length + 1) : run.experience;
+  if (name.startsWith(`${bench}/`)) name = name.slice(bench.length + 1);
+  return name;
+}
+function renderBench(root) {
+  const project = projectPage.project, runs = pageRuns();
+  const entry = benchmarksOf(runs)[view.bench];
+  const base = `#/projects/${encodeURIComponent(project.name)}`;
+  const out = [crumbs({label: "Projects", href: "#/projects"}, {label: project.name, href: base}, {label: view.bench}),
+    el("div", {class: "page-head"}, el("h1", {class: "mono"}, view.bench), el("span", {class: "chip-note"}, "benchmark"))];
+  if (!entry) { out.push(el("div", {class: "card empty-now"}, "No kept run reports a score on this benchmark.")); root.replaceChildren(...out); return; }
+  mapState.benchMetrics ||= {};
+  const all = Object.keys(entry.metrics).sort((a, b) => (MEASURE.test(a) ? 0 : 1) - (MEASURE.test(b) ? 0 : 1) || entry.metrics[b] - entry.metrics[a] || a.localeCompare(b));
+  const metrics = (mapState.benchMetrics[view.bench] || all.slice(0, 6)).filter((m) => all.includes(m));
+  const main = metrics[0] || benchMain(entry);
+  const models = bestPerModel(runs, view.bench, main);
+  const cols = metrics.map((m) => ({id: `${view.bench}|${m}`, bench: view.bench, metric: m}));
+  const ranks = {};
+  for (const c of cols) ranks[c.id] = [...new Set(models.map((r) => columnValues(r)[c.id]).filter((v) => typeof v === "number"))].sort((a, b) => lowerIsBetter(c.metric) ? a - b : b - a).slice(0, 2);
+  const byMethod = {};
+  for (const run of models) (byMethod[run.method || "(unassigned)"] ||= []).push(run);
+  const methods = Object.keys(byMethod).sort((a, b) => (b === project.focus) - (a === project.focus) || a.localeCompare(b));
+  const toggle = (m) => {
+    const list = mapState.benchMetrics[view.bench] || [...metrics];
+    mapState.benchMetrics[view.bench] = list.includes(m) ? list.filter((x) => x !== m) : [...list, m];
+    if (!mapState.benchMetrics[view.bench].length) delete mapState.benchMetrics[view.bench];
+    renderProjectsView();
+  };
+  const head = el("tr", {}, el("th", {class: "run-col"}, "Model (its best run)"), el("th", {}, "Method"),
+    cols.map((c) => el("th", {class: "result-col", title: `${c.metric} — ${lowerIsBetter(c.metric) ? "lower" : "higher"} is better`}, breakable(c.metric), lowerIsBetter(c.metric) ? " ↓" : " ↑")),
+    el("th", {}, "Version"), el("th", {}, "Ended"));
+  const bodies = methods.map((m) => el("tbody", {}, byMethod[m].map((run) => el("tr", {class: run === models[0] ? "top-row" : "", onclick: () => go(`#/run/${encodeURIComponent(project.name)}/${run.id}`)},
+    el("td", {class: "run-col", title: `${run.experience}${run.note ? `\n${run.note}` : ""}`}, modelName(run, view.bench), run.times > 1 ? el("span", {class: "faint small"}, ` ×${run.times}`) : null),
+    el("td", {class: "small"}, m === project.focus ? el("b", {}, m) : m),
+    cols.map((c) => { const v = columnValues(run)[c.id], rank = typeof v === "number" ? ranks[c.id].indexOf(v) : -1;
+      return el("td", {class: `num${rank === 0 ? " first" : rank === 1 ? " second" : ""}`}, typeof v === "number" ? number(v) : "–"); }),
+    el("td", {class: "mono small"}, run.version ? `v${run.version}` : ""),
+    el("td", {class: "small muted"}, run.ended ? ago(Date.now() / 1000 - run.ended) : "")))));
+  const blocks = methods.map((m) => byMethod[m]);
+  const exportText = (format) => paperExport(format, {vary: [], cols, blocks, values: columnValues, ranks});
+  const copy = (format) => async (event) => {
+    try { await navigator.clipboard.writeText(exportText(format)); event.target.textContent = "copied"; } catch (error) { /* no clipboard */ }
+    setTimeout(() => { event.target.textContent = format === "latex" ? "Copy LaTeX" : "Copy Markdown"; }, 1500);
+  };
+  const datasets = [...new Set(runs.filter((r) => entry.runs.has(r.experience)).flatMap((r) => r.datasets || []))];
+  out.push(el("div", {class: "kv small"},
+    el("div", {}, "Models"), el("div", {}, `${models.length} (each at its best run on ${main})`),
+    el("div", {}, "Methods"), el("div", {}, methods.join(", ")),
+    el("div", {}, "Metrics"), el("div", {}, `${all.length}`),
+    datasets.length ? el("div", {}, "Data read") : null, datasets.length ? el("div", {class: "mono"}, datasets.join(", ")) : null));
+  const rest = all.filter((m) => !metrics.includes(m));
+  out.push(el("section", {}, el("h2", {}, "Leaderboard ", el("span", {class: "count"}, "one row per model, at its best run; blocks by method")),
+    el("div", {class: "toolbar picker"}, el("span", {class: "small muted"}, "metrics"),
+      el("div", {class: "chips wrap"}, [...new Set([...all.slice(0, 10), ...metrics])].map((m) => el("button", {class: `chip${metrics.includes(m) ? " on" : ""}`, onclick: () => toggle(m)}, m))),
+      rest.length > 10 ? el("select", {class: "select", onchange: (e) => e.target.value && toggle(e.target.value)}, el("option", {value: ""}, `+ ${rest.length - 10} more…`),
+        rest.slice(10).map((m) => el("option", {value: m}, m))) : null),
+    el("div", {class: "card table-wrap map paper-wrap"}, el("table", {class: "paper"}, el("thead", {}, head), ...bodies)),
+    el("div", {class: "actions", style: {marginTop: "8px"}}, el("button", {class: "btn small", onclick: copy("latex")}, "Copy LaTeX"),
+      el("button", {class: "btn small", onclick: copy("markdown")}, "Copy Markdown"))));
+  root.replaceChildren(...out.filter(Boolean));
+}
 function latestRunsSection(project, runs) {
   const kept = runs.filter((r) => !r.live).sort((a, b) => (b.ended || 0) - (a.ended || 0)).slice(0, 10);
   if (!kept.length) return null;
@@ -1653,88 +1793,223 @@ function ablationSection(project, allRuns, {scope}) {
   // The method's main result when this family has it, else the family's own.
   const methodMain = primaryOf(project, allRuns);
   const primary = runs.some((r) => typeof r.results?.[methodMain] === "number") ? methodMain : primaryOf(project, runs);
-  let results = resultKeys(withMethod);
-  if (primary) results = [primary, ...results.filter((k) => k !== primary)];
-  const shownResults = mapState.all ? results : results.slice(0, 3);
-  const sorted = [...withMethod].sort((a, b) => {
-    const key = mapState.sort || (primary ? `r:${primary}` : null);
-    if (a.live !== b.live) return a.live ? -1 : 1;
-    if (!key) return (b.ended || 0) - (a.ended || 0);
-    const [kind, name] = [key.slice(0, 1), key.slice(2)];
-    const va = kind === "r" ? a.results?.[name] : a.factors?.[name], vb = kind === "r" ? b.results?.[name] : b.factors?.[name];
-    if (va === undefined || va === null) return 1;
-    if (vb === undefined || vb === null) return -1;
-    let order = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
-    if (kind === "r" && !mapState.sort) order = lowerIsBetter(name) ? order : -order;
-    else if (mapState.desc) order = -order;
-    return order;
-  });
-  const reference = withMethod.find((r) => r.key === mapState.reference);
-  const ranges = {};
-  for (const key of shownResults) {
-    const values = withMethod.map((r) => r.results?.[key]).filter((v) => typeof v === "number");
-    ranges[key] = [Math.min(...values), Math.max(...values)];
+  // ── the table: components, then scores by benchmark and metric ──
+  const columns = benchColumns(runs, primary);
+  const chosen = chooseColumns(columns, `${key}/${current}`, primary);
+  const values = (run) => columnValues(run);                      // "bench|metric" → value
+  const firstCol = chosen.cols[0];
+  const score = (run) => firstCol ? values(run)[firstCol.id] : undefined;
+  const lowerCol = (col) => lowerIsBetter(col.metric);
+  // Rows in blocks by the main component (the factor with the fewest distinct values).
+  const blockKey = vary.filter((k) => distinct(k) > 1).sort((a, b) => distinct(a) - distinct(b) || coverage(b) - coverage(a))[0];
+  const better = (a, b) => {
+    const va = score(a), vb = score(b);
+    if (typeof va !== "number") return 1;
+    if (typeof vb !== "number") return -1;
+    return firstCol && lowerCol(firstCol) ? va - vb : vb - va;
+  };
+  const scored = (run) => chosen.cols.some((c) => typeof values(run)[c.id] === "number");
+  const unscored = chosen.cols.length ? runs.filter((r) => !r.live && !scored(r)) : [];
+  const ordered = [...runs].filter((r) => mapState.showUnscored || !unscored.includes(r))
+    .sort((a, b) => (a.live !== b.live ? (a.live ? -1 : 1) : better(a, b)));
+  const blocks = [];
+  if (blockKey && !mapState.flat) {
+    const index = new Map();
+    for (const run of ordered) {
+      const value = JSON.stringify(run.factors?.[blockKey] ?? null);
+      if (!index.has(value)) { index.set(value, []); blocks.push(index.get(value)); }
+      index.get(value).push(run);
+    }
+  } else blocks.push(ordered);
+  // Best (bold) and second best (underlined) of each column; the best row is highlighted.
+  const ranks = {};
+  for (const col of chosen.cols) {
+    const sortedValues = [...new Set(runs.map((r) => values(r)[col.id]).filter((v) => typeof v === "number"))]
+      .sort((a, b) => lowerCol(col) ? a - b : b - a);
+    ranks[col.id] = sortedValues.slice(0, 2);
   }
-  const sortBy = (key) => { mapState.desc = mapState.sort === key ? !mapState.desc : true; mapState.sort = key; renderProjectsView(); };
-  const head = el("tr", {}, el("th", {title: "Reference: the other rows show what differs from it"}, "ref"), el("th", {}, "Run"), el("th", {}, "Status"),
-    shownResults.map((k, i) => el("th", {class: `result-col sortable${i === shownResults.length - 1 ? " group-end" : ""}`, title: `result ${k} — ${lowerIsBetter(k) ? "lower" : "higher"} is better`},
-      el("span", {onclick: () => sortBy(`r:${k}`)}, breakable(shortKey(k))),
-      el("button", {class: "dir", title: "Switch: lower / higher is better", onclick: (e) => { e.stopPropagation(); flipped[k] = !flipped[k]; prefs.set("flipped", flipped); renderProjectsView(); }},
-         lowerIsBetter(k) ? "↓" : "↑"))),
-    vary.map((k) => el("th", {class: "factor-col sortable", onclick: () => sortBy(`f:${k}`),
-      title: `factor ${k}${twins[k] ? `\nsame values: ${twins[k].join(", ")}` : ""}`},
+  const topRun = ordered.find((r) => !r.live && typeof score(r) === "number");
+  const benches = [...new Set(chosen.cols.map((c) => c.bench))];
+  const head1 = el("tr", {}, el("th", {rowspan: "2", class: "run-col"}, "Run"),
+    vary.length ? el("th", {colspan: String(vary.length), class: "group-head group-end"}, "Components") : null,
+    benches.map((b) => el("th", {colspan: String(chosen.cols.filter((c) => c.bench === b).length), class: "group-head group-end", title: b}, breakable(shortBench(b)))));
+  const head2 = el("tr", {},
+    vary.map((k, i) => el("th", {class: `factor-col${i === vary.length - 1 ? " group-end" : ""}`, title: `${k}${twins[k] ? `\nsame values: ${twins[k].join(", ")}` : ""}`},
       breakable(shortKey(k)), twins[k] ? el("div", {class: "faint tiny"}, `+${twins[k].length} same`) : null)),
-    el("th", {class: "hide-sm"}, "Version"));
-  const body = sorted.map((run) => {
-    const cells = [el("td", {}, run.live ? null : el("input", {type: "radio", name: "reference", checked: run.key === mapState.reference ? "checked" : null,
-        "aria-label": "Use as reference", onclick: (e) => { e.stopPropagation(); mapState.reference = mapState.reference === run.key ? null : run.key; renderProjectsView(); }})),
-      el("td", {title: run.note || run.experience}, el("div", {}, shortName(run.experience), run.times > 1 ? el("span", {class: "faint small"}, ` ×${run.times}`) : null), el("div", {class: "sub"}, run.live ? `${run.machine} · now` : `${run.machine || ""}${run.ended ? ` · ${ago(Date.now() / 1000 - run.ended)}` : ""}`)),
-      el("td", {}, pill(run.status))];
-    for (const key of shownResults) {
-      const value = run.results?.[key];
-      const td = el("td", {class: "num"}, typeof value === "number" ? number(value) : "");
-      if (typeof value === "number") {
-        const [min, max] = ranges[key];
-        let t = max === min ? .5 : (value - min) / (max - min);
-        if (lowerIsBetter(key)) t = 1 - t;
-        td.style.background = t >= .5 ? `color-mix(in srgb, var(--ok) ${Math.round((t - .5) * 56)}%, transparent)`
-                                       : `color-mix(in srgb, var(--bad) ${Math.round((.5 - t) * 40)}%, transparent)`;
-        if (value === best(withMethod, key)) td.classList.add("best");
-      }
-      if (key === shownResults[shownResults.length - 1]) td.classList.add("group-end");
-      cells.push(td);
+    chosen.cols.map((c) => el("th", {class: `result-col${c === chosen.cols.filter((x) => x.bench === c.bench).slice(-1)[0] ? " group-end" : ""}`,
+      title: `${c.bench} · ${c.metric} — ${lowerCol(c) ? "lower" : "higher"} is better (click ↑↓ to switch)`},
+      breakable(c.metric), el("button", {class: "dir", onclick: (e) => { e.stopPropagation(); flipped[c.metric] = !flipped[c.metric]; prefs.set("flipped", flipped); renderProjectsView(); }}, lowerCol(c) ? "↓" : "↑"))));
+  const bodies = blocks.map((rows) => el("tbody", {}, rows.map((run) => {
+    const vals = values(run);
+    const cells = [el("td", {class: "run-col", title: run.note || run.experience},
+      el("div", {}, shortName(run.experience), run.times > 1 ? el("span", {class: "faint small"}, ` ×${run.times}`) : null,
+         run.status !== "done" ? el("span", {class: `small st-${run.status}`, style: {color: "var(--c)"}}, ` · ${LABELS[run.status] || run.status}`) : null))];
+    vary.forEach((k, i) => cells.push(el("td", {class: `factor${i === vary.length - 1 ? " group-end" : ""}`}, mark(run.factors?.[k]))));
+    for (const c of chosen.cols) {
+      const v = vals[c.id];
+      const rank = typeof v === "number" ? ranks[c.id].indexOf(v) : -1;
+      const last = c === chosen.cols.filter((x) => x.bench === c.bench).slice(-1)[0];
+      cells.push(el("td", {class: `num${rank === 0 ? " first" : rank === 1 ? " second" : ""}${last ? " group-end" : ""}`}, typeof v === "number" ? number(v) : "–"));
     }
-    for (const key of vary) {
-      const value = run.factors?.[key];
-      const differs = reference && reference !== run && JSON.stringify(value ?? null) !== JSON.stringify(reference.factors?.[key] ?? null);
-      cells.push(el("td", {class: `factor${differs ? " differs" : ""}`}, cell(value)));
-    }
-    cells.push(el("td", {class: "hide-sm mono small"}, run.version ? `v${run.version}` : ""));
-    return el("tr", {class: run.key === mapState.reference ? "is-ref" : "", onclick: () => run.live ? go(`#/exp/${encodeURIComponent(run.alias)}/${encodeURIComponent(run.experience)}`)
+    return el("tr", {class: run === topRun ? "top-row" : "", onclick: () => run.live ? go(`#/exp/${encodeURIComponent(run.alias)}/${encodeURIComponent(run.experience)}`)
       : go(`#/run/${encodeURIComponent(project.name)}/${run.id}`)}, cells);
-  });
+  })));
+  const table = el("table", {class: "paper"}, el("thead", {}, head1, head2), ...bodies);
   const fixedText = fixed.filter((k) => !isPlumbing(k, null)).slice(0, 12).map((k) => `${shortKey(k)} = ${show(withMethod.find((r) => r.factors && k in r.factors)?.factors[k])}`).join(" · ");
   const chips = names.length > 1 ? el("div", {class: "toolbar"}, el("span", {class: "small muted"}, "family"),
     el("div", {class: "chips"}, names.map((n) => el("button", {class: `chip${n === current ? " on" : ""}`, title: `runs named ${view.method}/${n}/…`,
-      onclick: () => { mapState.family[key] = n; mapState.sort = null; mapState.reference = null; mapState.cell = null; renderProjectsView(); }},
+      onclick: () => { mapState.family[key] = n; mapState.cell = null; renderProjectsView(); }},
       `${n} · ${families[n].length}`)))) : null;
-  const noResults = !runs.some((r) => Object.keys(r.results || {}).some(trusted));
+  const picker = (label, all, on, toggle) => {
+    // The 10 most relevant (and those chosen) as chips; the others in a list.
+    if (all.length < 2) return null;
+    const shown = [...new Set([...all.slice(0, 10), ...on])];
+    const rest = all.filter((x) => !shown.includes(x));
+    const more = rest.length ? el("select", {class: "select", onchange: (e) => { if (e.target.value) toggle(e.target.value); }},
+      el("option", {value: ""}, `+ ${rest.length} more…`), rest.map((x) => el("option", {value: x}, x))) : null;
+    return el("div", {class: "toolbar picker"}, el("span", {class: "small muted"}, label),
+      el("div", {class: "chips wrap"}, shown.map((x) => el("button", {class: `chip${on.includes(x) ? " on" : ""}`, title: x, onclick: () => toggle(x)}, shortBench(x)))), more);
+  };
+  const toggle = (field) => (x) => {
+    const state = chosen.state;
+    const list = state[field] || [...chosen[field]];
+    state[field] = list.includes(x) ? list.filter((y) => y !== x) : [...list, x];
+    if (!state[field].length) delete state[field];
+    renderProjectsView();
+  };
+  const noResults = !chosen.cols.length;
+  const exportText = (format) => paperExport(format, {vary, cols: chosen.cols, blocks, values, ranks, twins});
+  const copy = (format) => async (event) => {
+    try { await navigator.clipboard.writeText(exportText(format)); event.target.textContent = "copied"; }
+    catch (error) { toast(`The ${format} table:`, null); }
+    setTimeout(() => { event.target.textContent = format === "latex" ? "Copy LaTeX" : "Copy Markdown"; }, 1500);
+  };
   const section = el("section", {},
-    el("h2", {}, "Ablation map", el("span", {class: "count"}, "a row per run: its results, then the factors that change")),
+    el("h2", {}, "Ablation table", el("span", {class: "count"}, "the components that change, then the scores per benchmark")),
     chips,
-    noResults ? el("div", {class: "small muted", style: {marginBottom: "8px"}}, "These runs report no number (data preparation?): only their settings are compared.") : null,
-    el("div", {class: "card table-wrap map"},
-      el("table", {class: "ablation"}, el("thead", {}, head), el("tbody", {}, body))),
+    picker("benchmarks", chosen.allBenches, chosen.benches, toggle("benches")),
+    picker("metrics", chosen.allMetrics, chosen.metrics, toggle("metrics")),
+    noResults ? el("div", {class: "small muted", style: {marginBottom: "8px"}}, "These runs report no score (data preparation?): only their components are compared.") : null,
+    el("div", {class: "card table-wrap map paper-wrap"}, table),
     el("div", {class: "map-notes small muted"},
       fixed.length ? el("div", {}, el("b", {}, "Same in every run: "), fixedText, fixed.length > 12 ? ` … (+${fixed.length - 12})` : "") : null,
       el("div", {class: "actions"},
-        results.length > 3 ? el("button", {class: "btn small ghost", onclick: () => { mapState.all = !mapState.all; renderProjectsView(); }},
-          mapState.all ? "Fewer results" : `All ${results.length} results`) : null,
         hiddenFactors > 0 || mapState.allFactors ? el("button", {class: "btn small ghost", onclick: () => { mapState.allFactors = !mapState.allFactors; renderProjectsView(); }},
-          mapState.allFactors ? `The ${MAX_FACTORS} main factors` : `${hiddenFactors} more factors`) : null),
-      el("div", {}, "Pick a reference (ref) to see what each run changes. Green: better, red: worse, within each column. Click a row for the run.")));
-  const correlations = correlationSection(withMethod, vary, shownResults);
+          mapState.allFactors ? `The ${MAX_FACTORS} main components` : `${hiddenFactors} more components`) : null,
+        unscored.length ? el("button", {class: "btn small ghost", onclick: () => { mapState.showUnscored = !mapState.showUnscored; renderProjectsView(); }},
+          mapState.showUnscored ? "Hide runs without scores" : `${unscored.length} run${unscored.length > 1 ? "s" : ""} without scores here`) : null,
+        blockKey ? el("button", {class: "btn small ghost", onclick: () => { mapState.flat = !mapState.flat; renderProjectsView(); }},
+          mapState.flat ? `Group by ${shortKey(blockKey)}` : "One block") : null,
+        el("button", {class: "btn small", onclick: copy("latex")}, "Copy LaTeX"),
+        el("button", {class: "btn small", onclick: copy("markdown")}, "Copy Markdown")),
+      el("div", {}, el("b", {}, "Bold"), ": best per column, ", el("u", {}, "underlined"), ": second best; the highlighted row is the best on the first column.",
+        blockKey && !mapState.flat ? ` Blocks: by ${shortKey(blockKey)}.` : "", " Click a row for the run.")));
+  // Correlations on the same columns.
+  const tableRuns = runs.map((r) => ({...r, results: Object.fromEntries(chosen.cols.map((c) => [`${shortBench(c.bench)} · ${c.metric}`, values(r)[c.id]]).filter(([, v]) => typeof v === "number"))}));
+  const correlations = correlationSection(tableRuns, vary, chosen.cols.slice(0, 6).map((c) => `${shortBench(c.bench)} · ${c.metric}`));
   return el("div", {class: "stack"}, section, correlations);
+}
+
+// ── benchmarks: where a score was measured, read from its key or the run's name ──
+const GENERIC = new Set(["metrics", "metric", "results", "result", "scores", "score", "eval", "evaluation",
+                         "test", "val", "valid", "report", "summary", "final", "output", "outputs"]);
+function benchOf(run, key) {
+  // `step.<benchmark…>.metric`; when the middle says nothing ("metrics"), the benchmark is the
+  // run's name without its method and its last part (the model): "flowers/classify/knn" → "flowers/classify".
+  if (key.endsWith(".last") || key.endsWith(".best")) return null;      // training curves
+  const parts = key.split(".");
+  if (parts.length < 2) return null;
+  const metric = parts[parts.length - 1];
+  if (COUNT.test(metric)) return null;
+  const middle = parts.slice(1, -1).filter((p) => !GENERIC.has(p.toLowerCase()));
+  if (middle.length) return {bench: middle.join("."), metric};
+  const method = run.method || "";
+  const short = run.experience.startsWith(`${method}/`) ? run.experience.slice(method.length + 1) : run.experience;
+  const names = short.split("/");
+  return {bench: names.length > 1 ? names.slice(0, -1).join("/") : (parts[0] || "·"), metric};
+}
+function columnValues(run) {
+  if (run._columns) return run._columns;
+  const out = {};
+  for (const [key, value] of Object.entries(run.results || {})) {
+    if (typeof value !== "number") continue;
+    const where = benchOf(run, key);
+    if (where) out[`${where.bench}|${where.metric}`] = value;
+  }
+  Object.defineProperty(run, "_columns", {value: out, enumerable: false});
+  return out;
+}
+function benchColumns(runs) {
+  const count = {};
+  for (const run of runs) for (const id of Object.keys(columnValues(run))) count[id] = (count[id] || 0) + 1;
+  return Object.entries(count).map(([id, n]) => { const [bench, metric] = id.split("|"); return {id, bench, metric, n}; });
+}
+function chooseColumns(columns, stateKey, primary) {
+  // Default: the main result's metric on every benchmark that has it (a paper's main table);
+  // a single benchmark: its metrics. Chips change both.
+  mapState.columns ||= {};
+  const state = mapState.columns[stateKey] ||= {};
+  const coverage = (field, value) => columns.filter((c) => c[field] === value).reduce((a, c) => a + c.n, 0);
+  const allBenches = [...new Set(columns.map((c) => c.bench))].sort((a, b) => coverage("bench", b) - coverage("bench", a) || a.localeCompare(b));
+  const allMetrics = [...new Set(columns.map((c) => c.metric))].sort((a, b) =>
+    (MEASURE.test(a) ? 0 : 1) - (MEASURE.test(b) ? 0 : 1) || coverage("metric", b) - coverage("metric", a) || a.localeCompare(b));
+  const mainMetric = primary ? primary.split(".").pop() : null;
+  let metrics = state.metrics?.filter((m) => allMetrics.includes(m));
+  let benches = state.benches?.filter((b) => allBenches.includes(b));
+  if (!metrics?.length) {
+    metrics = allBenches.length === 1 ? allMetrics.slice(0, 6)
+      : [allMetrics.includes(mainMetric) ? mainMetric : allMetrics[0]].filter(Boolean);
+  }
+  if (!benches?.length) benches = allBenches.filter((b) => columns.some((c) => c.bench === b && metrics.includes(c.metric))).slice(0, 8);
+  const cols = [];
+  for (const bench of benches) for (const metric of metrics) {
+    const found = columns.find((c) => c.bench === bench && c.metric === metric);
+    if (found) cols.push(found);
+  }
+  return {cols, benches, metrics, allBenches, allMetrics, state};
+}
+function shortBench(name) {
+  const parts = name.split(".");
+  return parts.length > 2 ? `…${parts.slice(-2).join(".")}` : name;
+}
+function mark(value) {
+  if (value === true) return el("span", {class: "yes"}, "✓");
+  if (value === false) return el("span", {class: "no"}, "×");
+  if (value === null || value === undefined) return el("span", {class: "faint"}, "–");
+  return cell(value);
+}
+function paperExport(format, {vary, cols, blocks, values, ranks}) {
+  const text = (v) => v === true ? (format === "latex" ? "\\checkmark" : "✓") : v === false ? (format === "latex" ? "$\\times$" : "×")
+    : v === null || v === undefined ? (format === "latex" ? "--" : "–") : show(v);
+  const esc = (t) => format === "latex" ? String(t).replace(/([_%&#$])/g, "\\$1") : String(t).replace(/\|/g, "\\|");
+  const score = (col, run) => {
+    const v = values(run)[col.id];
+    if (typeof v !== "number") return format === "latex" ? "--" : "–";
+    const rank = ranks[col.id].indexOf(v), shown = number(v);
+    if (format === "latex") return rank === 0 ? `\\textbf{${shown}}` : rank === 1 ? `\\underline{${shown}}` : shown;
+    return rank === 0 ? `**${shown}**` : rank === 1 ? `_${shown}_` : shown;
+  };
+  const benches = [...new Set(cols.map((c) => c.bench))];
+  if (format === "markdown") {
+    const name = (run) => view.kind === "bench" ? modelName(run, view.bench) : shortName(run.experience);
+    const header = [view.kind === "bench" ? "Model" : "Run", ...vary.map(shortKey), ...cols.map((c) => `${shortBench(c.bench)} ${c.metric}`)];
+    const lines = [`| ${header.map(esc).join(" | ")} |`, `|${header.map(() => "---").join("|")}|`];
+    for (const rows of blocks) for (const run of rows) lines.push(`| ${[esc(name(run)), ...vary.map((k) => esc(text(run.factors?.[k]))), ...cols.map((c) => score(c, run))].join(" | ")} |`);
+    return lines.join("\n") + "\n";
+  }
+  const spec = `l${"c".repeat(vary.length)}${benches.map((b) => "c".repeat(cols.filter((c) => c.bench === b).length)).join("")}`;
+  const lines = ["\\begin{tabular}{" + spec + "}", "\\toprule"];
+  const top = ["", vary.length ? `\\multicolumn{${vary.length}}{c}{Components}` : null,
+               ...benches.map((b) => `\\multicolumn{${cols.filter((c) => c.bench === b).length}}{c}{${esc(shortBench(b))}}`)].filter((x) => x !== null);
+  lines.push(top.join(" & ") + " \\\\");
+  const name = (run) => view.kind === "bench" ? modelName(run, view.bench) : shortName(run.experience);
+  lines.push([view.kind === "bench" ? "Model" : "Run", ...vary.map((k) => esc(shortKey(k))), ...cols.map((c) => esc(c.metric))].join(" & ") + " \\\\");
+  blocks.forEach((rows, i) => {
+    lines.push("\\midrule");
+    for (const run of rows) lines.push([esc(name(run)), ...vary.map((k) => esc(text(run.factors?.[k]))), ...cols.map((c) => score(c, run))].join(" & ") + " \\\\");
+  });
+  lines.push("\\bottomrule", "\\end{tabular}");
+  return lines.join("\n") + "\n";
 }
 
 function correlationSection(runs, factors, results) {

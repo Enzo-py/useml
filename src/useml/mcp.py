@@ -45,6 +45,15 @@ TOOLS = [
          "factors": {"type": "integer", "description": "factor columns (default 10)"},
          "family": {"type": "string", "description": "with method: the family of runs (first part of their names under the method)"},
          "local": {"type": "boolean"}}}},
+    {"name": "useml_benchmarks",
+     "description": "A project's benchmarks (where scores were measured, read from result keys "
+                    "or run names). With `benchmark`: its sheet — one row per model at its best "
+                    "run, its metrics (*best, _second), by method.",
+     "inputSchema": {"type": "object", "required": ["project"], "properties": {
+         "project": {"type": "string"},
+         "benchmark": {"type": "string"},
+         "metrics": {"type": "integer", "description": "metric columns (default 6)"},
+         "local": {"type": "boolean"}}}},
     {"name": "useml_run",
      "description": "One finished run: its factors, results, curves (first → last, best), "
                     "steps, data, configs, error. `code` adds its declaration as Python (to "
@@ -84,6 +93,11 @@ def call(name: str, arguments: dict) -> str:
                             limit=int(arguments.get("limit") or 25),
                             max_factors=int(arguments.get("factors") or 10),
                             family_name=arguments.get("family"))
+    if name == "useml_benchmarks":
+        if arguments.get("benchmark"):
+            return info.bench(src, arguments["project"], arguments["benchmark"],
+                              metrics=int(arguments.get("metrics") or 6))
+        return info.benchmarks(src, arguments["project"])
     if name == "useml_run":
         return info.run(src, arguments["ref"], project_name=arguments.get("project"),
                         code=bool(arguments.get("code")), configs=bool(arguments.get("configs")))

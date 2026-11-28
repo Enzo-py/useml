@@ -420,7 +420,11 @@ def _info(args) -> int:
                 data = {"state": src.state(), "projects": src.projects()}
             print(json.dumps(data, indent=1, default=str))
             return 0
-        if command == "project":
+        if command == "project" and args.benchmarks:
+            text = info.benchmarks(src, args.name)
+        elif command == "bench":
+            text = info.bench(src, args.name, args.benchmark, metrics=args.metrics)
+        elif command == "project":
             text = info.project(src, args.name, method=args.method, result=args.result,
                                 limit=args.limit, max_factors=args.factors,
                                 family_name=args.family)
@@ -768,6 +772,12 @@ def build_parser() -> argparse.ArgumentParser:
     info_project.add_argument("-m", "--method")
     info_project.add_argument("-r", "--result", help="the result runs are ranked by")
     info_project.add_argument("--limit", type=int, default=25)
+    info_project.add_argument("--benchmarks", action="store_true", help="the project's benchmarks")
+    info_bench = info_commands.add_parser("bench", parents=[info_common],
+                                          help="a benchmark: one row per model at its best run")
+    info_bench.add_argument("name", help="the project")
+    info_bench.add_argument("benchmark")
+    info_bench.add_argument("--metrics", type=int, default=6)
     info_run = info_commands.add_parser("run", parents=[info_common],
                                         help="one kept run (id prefix or experience name)")
     info_run.add_argument("ref")
