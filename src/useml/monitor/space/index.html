@@ -297,6 +297,29 @@
   .code-block pre { padding-right: 64px; }
   .code-block button { position: absolute; top: 6px; right: 6px; }
 
+  /* the method's schema */
+  .schema { position: relative; overflow-x: auto; padding: 16px; }
+  .schema-links { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+  .schema-flow { position: relative; display: flex; gap: 44px; align-items: flex-start; min-width: min-content; }
+  .schema-col { display: grid; gap: 14px; min-width: 200px; max-width: 320px; }
+  .schema-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); }
+  .schema-card.varies { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+  .schema-card.io { background: var(--surface-2); }
+  .schema-title { font-weight: 650; font-size: 14px; }
+  .schema .group { margin: 2px 0 2px 2px; }
+  .schema .group > summary { cursor: pointer; font-size: 12.5px; padding: 2px 0; list-style: revert; }
+  .schema .group.varies > summary .group-name { color: var(--accent); font-weight: 600; }
+  .schema .group > :not(summary) { margin-left: 12px; }
+  .schema .leaf { display: flex; gap: 8px; justify-content: space-between; align-items: baseline; font-size: 12.5px; padding: 1px 6px; border-radius: 5px; }
+  .schema .leaf-name { color: var(--muted); }
+  .schema .leaf-value { font-family: var(--mono); font-size: 12px; text-align: right; }
+  .schema .leaf.varies { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .schema .leaf.varies .leaf-name { color: var(--text); font-weight: 600; }
+  .schema .leaf.changed { outline: 1.5px solid var(--warn); }
+  .schema .leaf.partial .leaf-name { font-style: italic; }
+  .schema .tried { font-size: 10px; color: var(--accent); border: 1px solid currentColor; border-radius: 8px; padding: 0 5px; }
+  .schema .outs { display: grid; gap: 2px; margin-top: 6px; }
+
   /* evolution and reports */
   .records { display: grid; gap: 2px; }
   .record { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: grid; gap: 4px; }
@@ -1495,6 +1518,7 @@ function renderMethod(root) {
     el("a", {href: `#/new/${encodeURIComponent(project.name)}/method`}, "How to start one")));
   else {
     out.push(runningSection(runs));
+    out.push(schemaSection(project, runs));
     out.push(evolutionSection(project, runs));
     out.push(versionsSection(project, runs));
     out.push(ablationSection(project, runs, {scope: "method"}));
@@ -1503,6 +1527,147 @@ function renderMethod(root) {
   root.replaceChildren(...out.filter(Boolean));
 }
 
+// ── the method's schema: data → steps (their components) → benchmarks ──
+function schemaModel(runs) {
+  const kept = runs.filter((r) => !r.live && (r.steps || []).length).sort((a, b) => (b.ended || 0) - (a.ended || 0));
+  if (!kept.length) return null;
+  const order = [];
+  for (const run of kept) for (const step of run.steps) if (!order.includes(step.name)) order.push(step.name);
+  const steps = {};
+  for (const name of order) steps[name] = {name, function: null, reads: new Set(), inputs: new Set(), codes: new Set(), known: false};
+  for (const run of [...kept].reverse()) for (const step of run.steps) {
+    const entry = steps[step.name];
+    entry.function = step.function;
+    if (step.code) entry.codes.add(step.code);
+    if (step.reads) { entry.known = true; step.reads.forEach((r) => entry.reads.add(r)); }
+    (step.inputs || []).forEach((d) => entry.inputs.add(d));
+  }
+  // Records kept before 1.8 do not say which steps a step reads: then, one after the other.
+  if (!order.some((n) => steps[n].known)) order.forEach((n, i) => { if (i) steps[n].reads.add(order[i - 1]); });
+  const level = {};
+  const depth = (n, seen = new Set()) => {
+    if (level[n] !== undefined) return level[n];
+    if (seen.has(n)) return 0;
+    seen.add(n);
+    const parents = [...steps[n].reads].filter((r) => steps[r]);
+    return level[n] = parents.length ? 1 + Math.max(...parents.map((r) => depth(r, seen))) : 0;
+  };
+  order.forEach((n) => depth(n));
+  // The components of each step: its factors as a tree (`model.config.arch` → config › arch).
+  const trees = {};
+  for (const name of order) {
+    const having = kept.filter((r) => Object.keys(r.factors || {}).some((k) => k.startsWith(`${name}.`)));
+    const keys = [...new Set(having.flatMap((r) => Object.keys(r.factors || {})))].filter((k) => k.startsWith(`${name}.`) && !isPlumbing(k, null)).sort();
+    const root = {name, children: new Map(), varying: false};
+    for (const key of keys) {
+      const path = key.slice(name.length + 1).split(".");
+      let node = root;
+      for (const part of path) {
+        if (!node.children.has(part)) node.children.set(part, {name: part, children: new Map(), varying: false});
+        node = node.children.get(part);
+      }
+      const tried = new Map();
+      for (const run of having) { const v = JSON.stringify(run.factors?.[key] ?? null); tried.set(v, (tried.get(v) || 0) + 1); }
+      // Varies: two runs set different values. Only present in some runs: said apart.
+      const set = [...tried.keys()].filter((v) => v !== "null");
+      node.key = key; node.tried = tried; node.varying = set.length > 1; node.partial = !node.varying && tried.has("null") && set.length > 0;
+    }
+    const mark = (node) => { for (const child of node.children.values()) if (mark(child)) node.varying = true; return node.varying; };
+    mark(root);
+    trees[name] = root;
+  }
+  return {order, steps, level, trees, kept};
+}
+function schemaSection(project, allRuns) {
+  const {runs} = currentFamily(project, allRuns);
+  const model = schemaModel(runs);
+  if (!model) return null;
+  const main = primaryOf(project, allRuns);
+  const scored = model.kept.filter((r) => typeof r.results?.[main] === "number")
+    .sort((a, b) => lowerIsBetter(main) ? a.results[main] - b.results[main] : b.results[main] - a.results[main]);
+  const bestRun = scored[0] || model.kept[0];
+  mapState.schemaRun ||= {};
+  const stateKey = `${project.name}/${view.method}/${family(bestRun)}`;
+  const selected = model.kept.find((r) => r.key === mapState.schemaRun[stateKey]) || bestRun;
+  const select = el("select", {class: "select", onchange: (e) => { mapState.schemaRun[stateKey] = e.target.value; renderProjectsView(); }},
+    [...scored, ...model.kept.filter((r) => !scored.includes(r))].map((r) => el("option", {value: r.key, selected: r === selected ? "selected" : null},
+      `${shortName(r.experience)} · v${r.version}${typeof r.results?.[main] === "number" ? ` · ${number(r.results[main])}` : ""}${r === bestRun ? " (best)" : ""}`)));
+  const leafValue = (node, run) => run.factors?.[node.key];
+  const renderNode = (node, depth) => {
+    if (node.key !== undefined && !node.children.size) {
+      const value = leafValue(node, selected);
+      const changed = selected !== bestRun && JSON.stringify(value ?? null) !== JSON.stringify(leafValue(node, bestRun) ?? null);
+      const triedText = [...node.tried.entries()].map(([v, n]) => `${show(JSON.parse(v))} ×${n}`).join(" · ");
+      return el("div", {class: `leaf${node.varying ? " varies" : ""}${node.partial ? " partial" : ""}${changed ? " changed" : ""}`,
+          title: `${node.key}\ntried: ${triedText}${node.partial ? "\n(set in some runs only)" : ""}${changed ? `\nbest run: ${show(leafValue(node, bestRun) ?? "—")}` : ""}`},
+        el("span", {class: "leaf-name"}, node.name), el("span", {class: "leaf-value"}, mark(value)),
+        node.varying ? el("span", {class: "tried"}, `${[...node.tried.keys()].filter((v) => v !== "null").length}`) : null);
+    }
+    const children = [...node.children.values()];
+    const varying = children.filter((c) => c.varying).length;
+    const summary = el("summary", {}, el("span", {class: "group-name"}, node.name),
+      el("span", {class: "faint tiny"}, ` ${children.length}${varying ? ` · ${varying} vary` : ""}`));
+    return el("details", {class: `group${node.varying ? " varies" : ""}`, open: node.varying ? "" : null},
+      summary, children.map((c) => renderNode(c, depth + 1)));
+  };
+  const columns = [];
+  for (const name of model.order) (columns[model.level[name]] ||= []).push(name);
+  const datasets = [...new Set(model.order.flatMap((n) => [...model.steps[n].inputs]))];
+  const scores = Object.entries(columnValues(selected)).map(([id, v]) => { const [bench, metric] = id.split("|"); return {bench, metric, v}; });
+  const mainMetric = main ? main.split(".").pop() : null;
+  const shownScores = scores.filter((x) => !mainMetric || x.metric === mainMetric).slice(0, 8);
+  const benchCount = new Set(scores.map((x) => x.bench)).size;
+  const card = (id, title, sub, body, extra = "") => el("div", {class: `schema-card ${extra}`, "data-node": id}, el("div", {class: "schema-title"}, title), sub ? el("div", {class: "tiny muted mono"}, sub) : null, body);
+  const stepCard = (name) => {
+    const step = model.steps[name], tree = model.trees[name];
+    const selectedCode = selected.steps.find((s) => s.name === name)?.code, bestCode = bestRun.steps.find((s) => s.name === name)?.code;
+    const badges = [step.codes.size > 1 ? el("span", {class: "chip-note", title: "different code of this step across runs"}, `${step.codes.size} code versions`) : null,
+                    selected !== bestRun && selectedCode && bestCode && selectedCode !== bestCode ? el("span", {class: "chip-note warn"}, "code ≠ best run") : null].filter(Boolean);
+    const body = tree.children.size ? [...tree.children.values()].map((c) => renderNode(c, 1)) : [el("div", {class: "tiny faint"}, "no plain argument")];
+    return card(`step:${name}`, name, step.function, el("div", {}, badges.length ? el("div", {class: "chips-row", style: {margin: "4px 0"}}, badges) : null, body), tree.varying ? "varies" : "");
+  };
+  const flow = el("div", {class: "schema-flow"},
+    datasets.length ? el("div", {class: "schema-col"}, card("data", "Data", null, el("div", {class: "chips-row"}, datasets.map((d) => el("span", {class: "chip-note mono"}, d))), "io")) : null,
+    columns.map((names) => el("div", {class: "schema-col"}, names.map(stepCard))),
+    scores.length ? el("div", {class: "schema-col"}, card("out", "Benchmarks", `${benchCount} measured${mainMetric ? ` · ${mainMetric}` : ""}`,
+      el("div", {class: "outs"}, shownScores.map((x) => el("div", {class: "leaf"}, el("span", {class: "leaf-name", title: x.bench}, shortBench(x.bench)), el("span", {class: "leaf-value"}, number(x.v)))),
+        benchCount > shownScores.length ? el("a", {class: "tiny", href: `#/projects/${encodeURIComponent(project.name)}`}, `all ${benchCount} benchmarks →`) : null), "io")) : null);
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "schema-links");
+  const wrap = el("div", {class: "card schema"}, svg, flow);
+  // The arrows, once the boxes are laid out: data → steps that load it, step → step it feeds.
+  const edges = [];
+  for (const name of model.order) {
+    for (const from of model.steps[name].reads) if (model.steps[from]) edges.push([`step:${from}`, `step:${name}`]);
+    if (model.steps[name].inputs.size) edges.push(["data", `step:${name}`]);
+  }
+  const producers = new Set(Object.keys(selected.results || {}).map((k) => k.split(".")[0]));
+  for (const name of model.order) if (producers.has(name) && scores.length) edges.push([`step:${name}`, "out"]);
+  requestAnimationFrame(() => {
+    const box = wrap.getBoundingClientRect();
+    svg.setAttribute("width", wrap.scrollWidth); svg.setAttribute("height", wrap.scrollHeight);
+    svg.innerHTML = `<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--faint)"/></marker></defs>` +
+      edges.map(([a, b]) => {
+        const from = wrap.querySelector(`[data-node="${CSS.escape(a)}"]`)?.getBoundingClientRect(), to = wrap.querySelector(`[data-node="${CSS.escape(b)}"]`)?.getBoundingClientRect();
+        if (!from || !to) return "";
+        const x1 = from.right - box.left + wrap.scrollLeft, y1 = from.top - box.top + Math.min(28, from.height / 2);
+        const x2 = to.left - box.left + wrap.scrollLeft - 2, y2 = to.top - box.top + Math.min(28, to.height / 2);
+        const mid = (x1 + x2) / 2;
+        return `<path d="M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}" fill="none" stroke="var(--faint)" stroke-width="1.5" marker-end="url(#arrow)"/>`;
+      }).join("");
+  });
+  const varyingCount = model.order.reduce((n, name) => n + countVarying(model.trees[name]), 0);
+  return el("section", {}, el("h2", {}, "Schema ", el("span", {class: "count"}, `data → steps and their components → benchmarks · ${varyingCount} component${varyingCount === 1 ? "" : "s"} vary`)),
+    el("div", {class: "toolbar"}, el("label", {class: "inline-label"}, "values of", select),
+      el("span", {class: "small muted"}, "colored: varies across runs (hover: values tried) · outlined: differs from the best run")),
+    wrap);
+}
+function countVarying(node) {
+  if (node.key !== undefined && !node.children.size) return node.varying ? 1 : 0;
+  let n = 0;
+  for (const child of node.children.values()) n += countVarying(child);
+  return n;
+}
 function changes(before, after) {
   // What a run changed from another: its factors (old → new), and the steps whose code changed.
   const a = before.factors || {}, b = after.factors || {};
@@ -1754,9 +1919,9 @@ function latestRunsSection(project, runs) {
         el("td", {class: "muted small"}, run.ended ? ago(Date.now() / 1000 - run.ended) : ""));
     })))));
 }
-function ablationSection(project, allRuns, {scope}) {
+function currentFamily(project, allRuns) {
   // Families: runs of one method that share nothing (other datasets, other protocols) are
-  // compared within their family only.
+  // compared within their family only. The choice is shared by the schema and the table.
   const families = {};
   for (const run of allRuns) (families[family(run)] ||= []).push(run);
   const names = Object.keys(families).sort((a, b) =>
@@ -1767,7 +1932,10 @@ function ablationSection(project, allRuns, {scope}) {
     mapState.family[key] = names.find((n) => families[n].some((r) => Object.keys(r.results || {}).length)) || names[0];
   }
   const current = mapState.family[key];
-  const runs = names.length > 1 ? families[current] : allRuns;
+  return {families, names, key, current, runs: names.length > 1 ? families[current] : allRuns};
+}
+function ablationSection(project, allRuns, {scope}) {
+  const {families, names, key, current, runs} = currentFamily(project, allRuns);
   const withMethod = runs;
   const all = varying(withMethod);
   const fixed = all.fixed;

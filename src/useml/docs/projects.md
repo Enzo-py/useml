@@ -99,6 +99,14 @@ dashboard keeps them. The **Projects** tab shows:
 - **the methods**, the focus first: number of runs, code versions, best value of the main
   result, last run;
 - **the datasets** and which methods used them;
+- for a method, **its schema**: the data it loads → its steps, each with its components
+  (its arguments, as a tree: `config › arch`, `data › <name> › split`) → the
+  benchmarks it measures, with arrows from each step to the steps that read it. A
+  component that varies across runs is colored (hover: the values tried); one set in some
+  runs only is in italics. Choose a run: the boxes show its values, outlined where they
+  differ from the best run, and its scores. A step whose code changed between runs says
+  so. The schema draws what the steps receive, not what happens inside the code: named
+  arguments and configs make it richer;
 - for a method, **its evolution**: every run in order with its main result, the line of
   the best so far, and the list of each new best — by how much it beat the previous one,
   after how many other attempts, what it changed (factors `old → new`, the steps whose

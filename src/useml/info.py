@@ -610,6 +610,56 @@ def bench(src, name: str, benchmark: str, *, metrics: int = 6) -> str:
     return "\n".join(lines)
 
 
+def schema(runs: list[dict], method: str, main: str | None) -> list[str]:
+    """The method as data → steps (their components, as a tree) → benchmarks, with the
+    values of its best run; `*name=value [tried]` for components that vary."""
+    kept = [r for r in runs if r.get("steps")]
+    if not kept:
+        return []
+    kept.sort(key=lambda r: r.get("ended") or 0, reverse=True)
+    order: list = []
+    for run in kept:
+        for step in run["steps"]:
+            if step["name"] not in order:
+                order.append(step["name"])
+    scored = [r for r in kept if main and isinstance((r.get("results") or {}).get(main), (int, float))]
+    best = (min if main and lower_is_better(main) else max)(scored, key=lambda r: r["results"][main]) if scored else kept[0]
+    steps = {s["name"]: s for s in best["steps"]}
+    reads_known = any("reads" in s for r in kept for s in r["steps"])
+    short = best["experience"][len(method) + 1:] if best["experience"].startswith(f"{method}/") else best["experience"]
+    lines = [f"SCHEMA (values of {'the best run ' if scored else 'the latest run '}{short}; *varies across runs [values tried]):"]
+    data = sorted({d for r in kept for s in r["steps"] for d in s.get("inputs") or []})
+    if data:
+        lines.append(f"  data: {', '.join(data)}")
+    for index, name in enumerate(order):
+        step = steps.get(name) or next(s for r in kept for s in r["steps"] if s["name"] == name)
+        reads = step.get("reads") if reads_known else ([order[index - 1]] if index else [])
+        codes = {s.get("code") for r in kept for s in r["steps"] if s["name"] == name and s.get("code")}
+        lines.append(f"  {name} ({step['function']})" + (f" ← {', '.join(reads)}" if reads else "")
+                     + (f" · {len(codes)} code versions" if len(codes) > 1 else ""))
+        having = [r for r in kept if any(k.startswith(f"{name}.") for k in _factors(r))]
+        keys = sorted({k for r in having for k in _factors(r) if k.startswith(f"{name}.")})
+        groups: dict = {}
+        for key in keys:
+            tried = {json.dumps(r["factors"].get(key)) for r in having if r["factors"].get(key) is not None}
+            text = f"{key[len(name) + 1:]}={value(_factors(best).get(key, '-'))}"
+            if len(tried) > 1:
+                text = "*" + text + " [" + ", ".join(value(json.loads(t)) for t in sorted(tried)) + "]"
+            head = key[len(name) + 1:].split(".")[0]
+            groups.setdefault(head, []).append(text)
+        for head, items in groups.items():
+            varying = [t for t in items if t.startswith("*")]
+            if len(items) > 6 and not varying:
+                lines.append(f"    {head}: {len(items)} settings, none varies")
+            else:
+                shown = varying + [t for t in items if not t.startswith("*")][:6 - len(varying)]
+                lines.append(f"    {' · '.join(shown)}" + (f" +{len(items) - len(shown)}" if len(items) > len(shown) else ""))
+    benches = {b for (b, _) in scores(best)}
+    if benches:
+        lines.append(f"  → {len(benches)} benchmarks measured (useml info project <p> --benchmarks)")
+    return lines
+
+
 def family(experience: str, method: str) -> str:
     """The first part of a name under its method: `wide/v2/w8` → `v2`; a name alone → `·`."""
     short = experience[len(method) + 1:] if experience.startswith(f"{method}/") else experience
@@ -763,6 +813,7 @@ def project(src, name: str, *, method: str | None = None, result: str | None = N
         links.sort(reverse=True)
         lines.append("STRONGEST LINKS (r: −1..+1 for numbers, η: 0..1 for choices; a hint, not a proof): "
                      + "; ".join(text for _, text in links[:6]))
+    lines += schema(distinct, method, main)
     if main:
         lines += evolution(distinct, main, prefix=f"{method}/")
     versions: dict = {}

@@ -28,7 +28,8 @@ What each one says:
 - **project**: its methods, each ranked by its own main result with its best run, the
   runs going on, and the latest runs. Repeats of an identical run are counted (`×3`),
   not listed.
-- **project -m <method>**: with several families of runs (`v2/…`, `sweep/…`), the
+- **project -m <method>**: its schema (steps, their components with the values of the
+  best run, `*` for what varies, with the values tried); with several families of runs (`v2/…`, `sweep/…`), the
   most recent one that has results (`--family <name>` for another); the evolution (each new best of the main result, its gain,
   what it changed), then the runs table — results first, then only the factors that
   differ between runs (the ones that never change are listed once, at most 10 columns:

@@ -355,6 +355,18 @@ def declaration_code(spec: dict, name: str, method: str | None = None) -> str:
     return "\n".join(head + ["", f"with exp.experience({', '.join(options)}) as e:", *lines]) + "\n"
 
 
+def step_wiring(spec: dict) -> dict:
+    """{step: {"reads": the steps whose output it takes, "inputs": the data it loads}} —
+    what a method's schema draws as arrows."""
+    from .monitor._snapshot import _data
+
+    out = {}
+    for step in spec.get("steps", []):
+        out[step["name"]] = {"reads": list(step.get("reads") or []),
+                             "inputs": _data({"steps": [step]})}
+    return out
+
+
 # ── a run's record ────────────────────────────────────────────────────────────
 
 ENDED = ("done", "failed", "died", "stopped")
@@ -392,6 +404,7 @@ def record(experience, project: dict | None = None, *, machine: str | None = Non
     from .monitor._snapshot import _configs, _data
 
     code = {step["name"]: step.get("code") for step in spec.get("steps", [])}
+    wiring = step_wiring(spec)
     name = (project or {}).get("name")
     return {
         "format": FORMAT, "id": run_id(name or "", experience), "project": name,
@@ -402,7 +415,9 @@ def record(experience, project: dict | None = None, *, machine: str | None = Non
         "seconds": (ended - started) if ended and started else None,
         "machine": machine, "useml": __version__, "recorded": time.time(),
         "steps": [{"name": s["name"], "function": s["function"], "done": s["done"],
-                   "seconds": s["seconds"], "code": code.get(s["name"])} for s in steps],
+                   "seconds": s["seconds"], "code": code.get(s["name"]),
+                   "reads": wiring.get(s["name"], {}).get("reads", []),
+                   "inputs": wiring.get(s["name"], {}).get("inputs", [])} for s in steps],
         "declaration": declaration_code(spec, experience.name,
                                         method_of(experience.name, spec, project)),
         "factors": factors(spec), "results": {**results(experience), **summary},

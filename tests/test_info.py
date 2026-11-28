@@ -65,8 +65,8 @@ def test_alias_survives_a_hostname_change(monkeypatch):
 # ── what is a factor, which result ranks ─────────────────────────────────────
 
 @pytest.mark.parametrize("key,value,plumbing", [
-    ("model.train_sets.coco.fingerprint", "ab12", True),
-    ("model.train_sets.coco.path", "x", True),
+    ("model.data.coco.fingerprint", "ab12", True),
+    ("model.data.coco.path", "x", True),
     ("model.data_dir", "x", True),
     ("model.weights", "/data/w.pt", True),
     ("model.weights", "<project>/w.pt", True),
@@ -311,3 +311,27 @@ def test_benchmark_sheet(project):
     with pytest.raises(info.InfoError, match="no benchmark"):
         info.bench(src, "robust-vision", "nope")
     assert "useml_benchmarks" in {t["name"] for t in mcp.TOOLS}
+
+
+# ── the method's schema ──────────────────────────────────────────────────────
+
+def test_records_say_what_each_step_reads(project):
+    with exp.experience("wide/v3/pipe", detach=False) as e:
+        trained = e.step(steps.train_with_metrics, 3, name="train")
+        e.step(steps.identity, trained, name="check")
+    record = projects.record(exp.open("wide/v3/pipe"))
+    wiring = {s["name"]: (s["reads"], s["inputs"]) for s in record["steps"]}
+    assert wiring == {"train": ([], []), "check": (["train"], [])}
+
+
+def test_schema_shows_steps_components_and_what_varies(project):
+    for lr in (0.1, 0.01):
+        with exp.experience(f"wide/v3/lr{lr}", detach=False) as e:
+            trained = e.step(steps.train_with_metrics, 5, name="train")
+            e.step(steps.summary, [lr, 1.0], label="fixed", name="report")
+    text = info.project(info.Local(), "robust-vision", method="wide", family_name="v3")
+    block = text.split("SCHEMA")[1].split("EVOLUTION")[0] if "EVOLUTION" in text else text.split("SCHEMA")[1]
+    assert "train (exp_steps:train_with_metrics)" in block
+    assert "report (exp_steps:summary)" in block
+    assert "*values=[" in block                                        # the list that varies
+    assert "label=fixed" in block and "*label" not in block
